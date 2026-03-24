@@ -5,9 +5,11 @@ sys.dont_write_bytecode = True
 import pygame
 import base64
 import io
+import math
 
 # ── 1. 스프라이트 데이터 (여기에 Base64 문자열을 붙여넣으세요) ──
-_ROCKET = ("iVBORw0KGgoAAAANSUhEUgAAAHYAAAE7CAYAAAAIFnUXAAAYBElEQVR42u2d2XMU1/XH+Q9S/gsoqlwI"
+_ROCKET = (
+    "iVBORw0KGgoAAAANSUhEUgAAAHYAAAE7CAYAAAAIFnUXAAAYBElEQVR42u2d2XMU1/XH+Q9S/gsoqlwI"
     "IRthbMDGdvyaPCQkqaTKbzz4MZWiyr8k/OrngIzMIpCFoNiEVkAgs2gYFmFEwBGxIWAgVsDCIAQIDBY7"
     "YjFek/Svv6M+ozutXm733Dsz3X2m6lTZSKPuPp8+693GjUvAp6am5ictLS1tpvSYkm5oaKgcx59ofxob"
     "G99obW0dbmtrM0Rpbm6ey9qJ6AfwCOT27duNixcvGkePHs3ChRXDmllTEfoAGgHs6uoyhoeHjadPn2ak"
@@ -111,7 +113,8 @@ _ROCKET = ("iVBORw0KGgoAAAANSUhEUgAAAHYAAAE7CAYAAAAIFnUXAAAYBElEQVR42u2d2XMU1/XH
     "GavdYGWRQZMNiud++0otpzHREEstKCveIJHlx2ohlo9ShmXd2EJrmC5sPG+bPt0RKv49HyvCPckkgmJs"
     "jcXSSZlYG0SC1n1ktU5wCWpYaxXrclmJZWz1qgOllBJyQw6KgzqUTXFcRiK9+KqUvQO55ayiy8t7Izlz"
     "IcDn/wHCfL5Px/223AAAAC10RVh0U29mdHdhcmUAYnkuYmxvb2RkeS5jcnlwdG8uaW1hZ2UuUE5HMjRF"
-    "bmNvZGVyqAZ/7gAAAABJRU5ErkJggg==")
+    "bmNvZGVyqAZ/7gAAAABJRU5ErkJggg=="
+)
 _STONE = (
     "iVBORw0KGgoAAAANSUhEUgAAAEYAAABGCAYAAABxLuKEAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFn"
     "ZVJlYWR5ccllPAAAAyFpVFh0WE1MOmNvbS5hZG9iZS54bXAAAAAAADw/eHBhY2tldCBiZWdpbj0i77u/"
@@ -160,72 +163,131 @@ _STONE = (
 # ──────────────────────────────────────────────────────────
 
 def load_sprite(name):
-    # Base64 데이터 매핑
     data_map = {"rocket": _ROCKET, "stone": _STONE}
-    if name not in data_map:
-        return None
-    
+    if name not in data_map or not data_map[name]: return None
     raw = base64.b64decode(data_map[name])
     buf = io.BytesIO(raw)
     return pygame.image.load(buf).convert_alpha()
 
-# ── 2. 게임 초기화 ──────────────────────────────────────────
+# ── 2. 충돌 로직 ────────────────────────────────────────────────
+def get_obb_points(rect, angle):
+    w, h = rect.width, rect.height
+    cx, cy = rect.center
+    rad = math.radians(-angle) 
+    points = []
+    corners = [(w/2, h/2), (-w/2, h/2), (-w/2, -h/2), (w/2, -h/2)]
+    for x, y in corners:
+        rx = x * math.cos(rad) - y * math.sin(rad)
+        ry = x * math.sin(rad) + y * math.cos(rad)
+        points.append((cx + rx, cy + ry))
+    return points
+
+def project(axis, points):
+    dots = [p[0] * axis[0] + p[1] * axis[1] for p in points]
+    return min(dots), max(dots)
+
+def is_colliding_sat(poly1, poly2):
+    polygons = [poly1, poly2]
+    for poly in polygons:
+        for i in range(len(poly)):
+            p1 = poly[i]
+            p2 = poly[(i + 1) % len(poly)]
+            edge = (p2[0] - p1[0], p2[1] - p1[1])
+            axis = (-edge[1], edge[0])
+            minA, maxA = project(axis, poly1)
+            minB, maxB = project(axis, poly2)
+            if maxA < minB or maxB < minA: return False
+    return True
+
+# ── 3. 게임 초기화 ──────────────────────────────────────────
 pygame.init()
+pygame.font.init()
+font = pygame.font.SysFont("Arial", 20, bold=True)
+
 WIDTH, HEIGHT = 800, 600
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Single File Sprite Collision")
+pygame.display.set_caption("Stable Collision System")
 clock = pygame.time.Clock()
 
-# 색상 정의
-RED, BLUE, WHITE, YELLOW = (255, 0, 0), (0, 0, 255), (255, 255, 255), (255, 255, 0)
+RED, BLUE, GREEN, WHITE, BLACK = (255, 0, 0), (0, 0, 255), (0, 255, 0), (255, 255, 255), (0, 0, 0)
 
-# 스프라이트 로드
 player_img = load_sprite("rocket")
 target_img = load_sprite("stone")
 
-# Rect 및 충돌 범위 설정
 player_rect = player_img.get_rect(topleft=(100, 100))
-target_rect = target_img.get_rect(center=(WIDTH // 2, HEIGHT // 2))
+target_base_rect = target_img.get_rect(center=(WIDTH // 2, HEIGHT // 2))
 
-# 동적 반지름 계산
+# [수정] 고정된 AABB 설정 (이미지의 대각선 길이를 기준으로 정사각형 생성)
+diag = int(math.hypot(target_base_rect.width, target_base_rect.height))
+target_aabb_rect = pygame.Rect(0, 0, diag, diag)
+target_aabb_rect.center = target_base_rect.center
+
+# 원형 충돌용 반지름
 p_rad = min(player_img.get_width(), player_img.get_height()) // 2
 t_rad = min(target_img.get_width(), target_img.get_height()) // 2
 radius_sum_sq = (p_rad + t_rad) ** 2
 
+angle = 0
 speed = 5
 running = True
 
-# ── 3. 메인 루프 ──────────────────────────────────────────
+# ── 4. 메인 루프 ──────────────────────────────────────────
 while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
 
-    # 입력 처리
     keys = pygame.key.get_pressed()
     if keys[pygame.K_LEFT]: player_rect.x -= speed
     if keys[pygame.K_RIGHT]: player_rect.x += speed
     if keys[pygame.K_UP]: player_rect.y -= speed
     if keys[pygame.K_DOWN]: player_rect.y += speed
+    
+    rot_speed = 5 if keys[pygame.K_z] else 1
+    angle = (angle + rot_speed) % 360
+    
+    rotated_img = pygame.transform.rotate(target_img, angle)
+    rotated_rect = rotated_img.get_rect(center=target_base_rect.center)
 
-    # 원형 충돌 감지 (최적화: 제곱 비교)
-    dx = player_rect.centerx - target_rect.centerx
-    dy = player_rect.centery - target_rect.centerx # 수정됨: centery로 변경
-    dy = player_rect.centery - target_rect.centery
-    is_colliding = (dx**2 + dy**2) < radius_sum_sq
+    # 1. Circle 충돌
+    dx = player_rect.centerx - target_base_rect.centerx
+    dy = player_rect.centery - target_base_rect.centery
+    hit_circle = (dx**2 + dy**2) < radius_sum_sq
+    
+    # 2. AABB 충돌 (이제 고정된 target_aabb_rect 사용)
+    hit_aabb = player_rect.colliderect(target_aabb_rect)
+    
+    # 3. OBB (SAT) 충돌
+    player_poly = get_obb_points(player_rect, 0)
+    target_poly = get_obb_points(target_base_rect, angle)
+    hit_obb = is_colliding_sat(player_poly, target_poly)
 
     # 화면 그리기
-    screen.fill(YELLOW if is_colliding else WHITE)
+    screen.fill(WHITE)
 
-    # 스프라이트 그리기
-    screen.blit(player_img, player_rect.topleft)
-    screen.blit(target_img, target_rect.topleft)
-
-    # 디버깅용 박스/원 그리기
-    pygame.draw.rect(screen, RED, player_rect, 2)
-    pygame.draw.rect(screen, RED, target_rect, 2)
+    # 디버깅: 시각화
     pygame.draw.circle(screen, BLUE, player_rect.center, p_rad, 2)
-    pygame.draw.circle(screen, BLUE, target_rect.center, t_rad, 2)
+    pygame.draw.circle(screen, BLUE, target_base_rect.center, t_rad, 2)
+    
+    pygame.draw.rect(screen, RED, player_rect, 2)
+    pygame.draw.rect(screen, RED, target_aabb_rect, 2) # 고정된 AABB
+    
+    pygame.draw.polygon(screen, GREEN, player_poly, 2)
+    pygame.draw.polygon(screen, GREEN, target_poly, 2)
+
+    screen.blit(player_img, player_rect.topleft)
+    screen.blit(rotated_img, rotated_rect.topleft)
+
+    # 텍스트 표시
+    texts = [
+        (f"Circle: {'HIT' if hit_circle else 'MISS'}", BLUE),
+        (f"AABB:   {'HIT' if hit_aabb else 'MISS'}", RED),
+        (f"OBB:    {'HIT' if hit_obb else 'MISS'}", GREEN)
+    ]
+    
+    for i, (text_str, color) in enumerate(texts):
+        text_surf = font.render(text_str, True, color)
+        screen.blit(text_surf, (10, 10 + i * 25))
 
     pygame.display.flip()
     clock.tick(60)
