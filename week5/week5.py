@@ -4,9 +4,10 @@ import sys
 
 pygame.init()
 
-# --- 패링 관련 설정 ---
+# --- 패링 및 콤보 관련 설정 ---
 PARRY_DURATION = 15
 PARRY_COOLDOWN = 45
+COMBO_DURATION = 600  # 10초 (60 FPS * 10)
 
 def get_korean_font(size):
     candidates = ["malgungothic", "applegothic", "nanumgothic", "notosanscjk"]
@@ -46,12 +47,20 @@ def spawn_enemy(level_cfg):
     speed = random.randint(level_cfg["min_speed"], level_cfg["max_speed"])
     return pygame.Rect(x, -ENEMY_H, ENEMY_W, ENEMY_H), speed
 
-def draw_hud(score, lives, score_timer):
+def draw_hud(score, lives, score_timer, combo_count, combo_multiplier, combo_timer):
+    # 점수 UI
     if score_timer > 0:
         score_text = f"Score: {score}"
         score_surf = font.render(score_text, True, WHITE)
         screen.blit(score_surf, ((WIDTH - score_surf.get_width()) // 2, HEIGHT - 50))
     
+    # 콤보 UI
+    if combo_count > 0:
+        combo_text = f"Combo: {combo_count} (x{combo_multiplier:.1f})"
+        combo_surf = font.render(combo_text, True, GREEN)
+        screen.blit(combo_surf, (10, 80))
+    
+    # 라이브 UI
     lives_text = f"Lives: {'♥ ' * lives}"
     lives_surface = font.render(lives_text, True, RED)
     screen.blit(lives_surface, (WIDTH - lives_surface.get_width() - 10, 10))
@@ -73,7 +82,7 @@ def game_over_screen(score):
 def main():
     player = pygame.Rect(WIDTH // 2 - PLAYER_W // 2, HEIGHT - 60, PLAYER_W, PLAYER_H)
     enemies = []
-    parry_effects = [] # 패링 이펙트 리스트
+    parry_effects = []
     score = 0
     last_score = 0
     lives = 3
@@ -84,6 +93,11 @@ def main():
     parry_successful = False
     cooldown_timer = 0
     score_timer = 0
+    
+    # 콤보 변수
+    combo_count = 0
+    combo_multiplier = 1.0
+    combo_timer = 0
 
     level_idx = 0
     level_cfg = LEVELS[level_idx]
@@ -105,7 +119,7 @@ def main():
         
         if score_timer > 0: score_timer -= 1
 
-        # 타이머 관리
+        # 타이머 및 콤보 관리
         if parry_timer > 0:
             parry_timer -= 1
             if parry_timer == 0 and not parry_successful:
@@ -113,10 +127,16 @@ def main():
         
         if cooldown_timer > 0:
             cooldown_timer -= 1
+            
+        if combo_timer > 0:
+            combo_timer -= 1
+        else:
+            combo_count = 0
+            combo_multiplier = 1.0
 
         # 이펙트 업데이트
         for fx in parry_effects[:]:
-            fx["radius"] += 10 # 1초(60프레임) 동안 600까지 커지도록 속도 설정
+            fx["radius"] += 10
             if fx["radius"] >= fx["max_radius"]:
                 parry_effects.remove(fx)
 
@@ -149,7 +169,12 @@ def main():
                 hit_something = False
                 for pair in enemies:
                     if player.colliderect(pair[0]):
-                        score += 5
+                        # 콤보 및 점수 적용
+                        combo_count += 1
+                        combo_multiplier = round(combo_multiplier * 1.2, 2)
+                        combo_timer = COMBO_DURATION
+                        score += int(1 * combo_multiplier)
+                        
                         hit_something = True
                     else:
                         new_enemies.append(pair)
@@ -158,7 +183,6 @@ def main():
                 if hit_something:
                     parry_timer = 0 
                     parry_successful = True
-                    # 이펙트 추가: 플레이어 중심, 반지름 25에서 시작, 최대 반지름 600
                     parry_effects.append({"center": player.center, "radius": 25, "max_radius": 600})
             else:
                 for pair in enemies:
@@ -166,6 +190,10 @@ def main():
                         lives -= 1
                         invincible = 90
                         enemies.clear()
+                        # 콤보 초기화
+                        combo_count = 0
+                        combo_multiplier = 1.0
+                        combo_timer = 0
                         if lives <= 0:
                             if game_over_screen(score):
                                 main()
@@ -177,7 +205,6 @@ def main():
 
         screen.fill(GRAY)
 
-        # 이펙트 그리기 (흰색)
         for fx in parry_effects:
             pygame.draw.circle(screen, WHITE, fx["center"], int(fx["radius"]), 3)
 
@@ -195,7 +222,7 @@ def main():
         for pair in enemies:
             pygame.draw.rect(screen, RED, pair[0])
 
-        draw_hud(score, lives, score_timer)
+        draw_hud(score, lives, score_timer, combo_count, combo_multiplier, combo_timer)
         pygame.display.flip()
 
 main()
