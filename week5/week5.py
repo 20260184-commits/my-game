@@ -22,7 +22,7 @@ FPS = 60
 WHITE  = (255, 255, 255)
 BLACK  = (0,   0,   0)
 BLUE   = (50,  120, 220)
-GREEN  = (50,  220, 120) # 패링 성공 시
+GREEN  = (50,  220, 120) 
 RED    = (220, 50,  50)
 GRAY   = (40,  40,  40)
 
@@ -80,6 +80,7 @@ def main():
     invincible = 0
     
     parry_timer = 0
+    parry_successful = False # 패링 성공 여부 플래그
     cooldown_timer = 0
     score_timer = 0
 
@@ -92,10 +93,10 @@ def main():
         for e in pygame.event.get():
             if e.type == pygame.QUIT:
                 pygame.quit(); sys.exit()
-            # 쿨타임 중이 아닐 때만 패링 발동
             if e.type == pygame.KEYDOWN and e.key == pygame.K_SPACE:
                 if cooldown_timer == 0:
                     parry_timer = PARRY_DURATION
+                    parry_successful = False # 새 패링 시작 시 플래그 초기화
 
         if score != last_score:
             score_timer = 60
@@ -106,8 +107,8 @@ def main():
         # 타이머 관리
         if parry_timer > 0:
             parry_timer -= 1
-            # 타이머가 0이 되면 실패로 간주하여 쿨타임 시작
-            if parry_timer == 0:
+            # 패링 시간이 다 되었는데 성공한 적이 없다면 쿨타임 적용
+            if parry_timer == 0 and not parry_successful:
                 cooldown_timer = PARRY_COOLDOWN
         
         if cooldown_timer > 0:
@@ -148,9 +149,9 @@ def main():
                         new_enemies.append(pair)
                 enemies = new_enemies
                 
-                # 성공 시 패링 지속시간 초기화 (연속 패링)
                 if hit_something:
                     parry_timer = PARRY_DURATION
+                    parry_successful = True # 성공 기록
             else:
                 for pair in enemies:
                     if player.colliderect(pair[0]):
@@ -168,7 +169,6 @@ def main():
 
         screen.fill(GRAY)
 
-        # 쿨타임 중이면 빨간색, 패링 중이면 초록색, 평소에는 파란색
         if cooldown_timer > 0:
             player_color = RED
         elif parry_timer > 0:
