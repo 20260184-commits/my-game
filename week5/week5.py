@@ -5,8 +5,8 @@ import sys
 pygame.init()
 
 # --- 패링 관련 설정 ---
-PARRY_DURATION = 15  # 패링 지속 프레임
-PARRY_COOLDOWN = 45  # 패링 실패 시 쿨타임 프레임
+PARRY_DURATION = 15
+PARRY_COOLDOWN = 45
 
 def get_korean_font(size):
     candidates = ["malgungothic", "applegothic", "nanumgothic", "notosanscjk"]
@@ -73,6 +73,7 @@ def game_over_screen(score):
 def main():
     player = pygame.Rect(WIDTH // 2 - PLAYER_W // 2, HEIGHT - 60, PLAYER_W, PLAYER_H)
     enemies = []
+    parry_effects = [] # 패링 이펙트 리스트
     score = 0
     last_score = 0
     lives = 3
@@ -80,7 +81,7 @@ def main():
     invincible = 0
     
     parry_timer = 0
-    parry_successful = False # 패링 성공 여부 플래그
+    parry_successful = False
     cooldown_timer = 0
     score_timer = 0
 
@@ -93,11 +94,10 @@ def main():
         for e in pygame.event.get():
             if e.type == pygame.QUIT:
                 pygame.quit(); sys.exit()
-            # 쿨타임 중이 아닐 때만 패링 발동
             if e.type == pygame.KEYDOWN and e.key == pygame.K_SPACE:
                 if cooldown_timer == 0:
                     parry_timer = PARRY_DURATION
-                    parry_successful = False # 새 패링 시작 시 플래그 초기화
+                    parry_successful = False
 
         if score != last_score:
             score_timer = 60
@@ -108,12 +108,17 @@ def main():
         # 타이머 관리
         if parry_timer > 0:
             parry_timer -= 1
-            # 패링 시간이 다 되었는데 성공한 적이 없다면 쿨타임 적용
             if parry_timer == 0 and not parry_successful:
                 cooldown_timer = PARRY_COOLDOWN
         
         if cooldown_timer > 0:
             cooldown_timer -= 1
+
+        # 이펙트 업데이트
+        for fx in parry_effects[:]:
+            fx["radius"] += 10 # 1초(60프레임) 동안 600까지 커지도록 속도 설정
+            if fx["radius"] >= fx["max_radius"]:
+                parry_effects.remove(fx)
 
         keys = pygame.key.get_pressed()
         if keys[pygame.K_LEFT]  and player.left  > 0:     player.x -= 5
@@ -150,10 +155,11 @@ def main():
                         new_enemies.append(pair)
                 enemies = new_enemies
                 
-                # 성공 시 패링 즉시 종료 및 성공 플래그 설정
                 if hit_something:
                     parry_timer = 0 
-                    parry_successful = True 
+                    parry_successful = True
+                    # 이펙트 추가: 플레이어 중심, 반지름 25에서 시작, 최대 반지름 600
+                    parry_effects.append({"center": player.center, "radius": 25, "max_radius": 600})
             else:
                 for pair in enemies:
                     if player.colliderect(pair[0]):
@@ -171,7 +177,10 @@ def main():
 
         screen.fill(GRAY)
 
-        # 쿨타임 중이면 빨간색, 패링 중이면 초록색, 평소에는 파란색
+        # 이펙트 그리기 (흰색)
+        for fx in parry_effects:
+            pygame.draw.circle(screen, WHITE, fx["center"], int(fx["radius"]), 3)
+
         if cooldown_timer > 0:
             player_color = RED
         elif parry_timer > 0:
