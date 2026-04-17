@@ -10,9 +10,11 @@ BOSS_TRIGGER_SCORE = 100
 BASE_ENEMY_SPEED_MIN = 4  
 BASE_ENEMY_SPEED_MAX = 5  
 BASE_SPAWN_RATE = 20      
+MIN_SPAWN_RATE = 8        
 COMBO_TIMEOUT = 600       
-BOSS_WAVE_POSITIONS = [0.25, 0.1, 0.5, 0.9, 0.75]
+BOSS_WAVE_POSITIONS = [0.1, 0.3, 0.5, 0.7, 0.9]
 WAVE_INTERVAL = 150 
+BOSS_PHASE2_SPEED_MULT = 2.3  # [추가] 2페이지 적 속도 배수 (여기서 직접 조절하세요!)
 FPS = 60
 
 # --- 상수 ---
@@ -66,7 +68,6 @@ def load_player_sprites():
                 row, col = divmod(i, 8)
                 rect = pygame.Rect(col * FRAME_W, row * FRAME_H, FRAME_W, FRAME_H)
                 frames.append(pygame.transform.scale(sheet.subsurface(rect), (SPRITE_W, SPRITE_H)))
-            
             if direction == "parry": animations["parry"] = frames
             else:
                 animations[f"walk_{direction}"] = frames
@@ -79,17 +80,18 @@ PLAYER_ANIMATIONS = load_player_sprites()
 def spawn_enemy(boss_state, min_spd, max_spd, diff_mult, target_x=None, y_offset=0):
     if boss_state == STATE_PHASE1:
         speed = 6
+    elif boss_state == STATE_PHASE2:
+        # [수정] 2페이지는 점수 배수(diff_mult)를 무시하고 전용 배수만 적용
+        speed = int(random.randint(min_spd, max_spd) * BOSS_PHASE2_SPEED_MULT)
     else:
-        speed_mult = 1.6 if boss_state != STATE_NORMAL else 1.0
+        # 일반 상태일 때는 기존처럼 점수 배수 적용
+        speed_mult = 1.0 
         speed = int(random.randint(min_spd, max_spd) * speed_mult * diff_mult)
     
     if boss_state == STATE_NORMAL or boss_state == STATE_PHASE1:
         x = target_x if target_x is not None else random.randint(0, WIDTH - ENEMY_W)
-        # [수정] HUD_HEIGHT 대신 HUD_HEIGHT - 100 으로 설정하여 화면 밖에서 생성
-        # y_offset은 3줄 배치를 위해 그대로 유지
         return {"rect": pygame.Rect(x, HUD_HEIGHT - 100 + y_offset, ENEMY_W, ENEMY_H), "vel": (0, speed)}
     else:
-        # [수정] 2페이지 적들도 좌우가 아닌 위에서 아래로 나오게 변경
         x = random.randint(0, WIDTH - ENEMY_W)
         return {"rect": pygame.Rect(x, HUD_HEIGHT - 50, ENEMY_W, ENEMY_H), "vel": (0, speed)}
     
@@ -107,7 +109,8 @@ def game_over_screen(score, title="GAME OVER", color=RED):
                 if e.key == pygame.K_r: return True
                 if e.key == pygame.K_q: pygame.quit(); sys.exit()
 
-def main():
+def play_game():
+    """ 실제 게임 플레이 로직 (메모리 누수 방지를 위해 분리) """
     try: pygame.mixer.music.load(MUSIC_FILE); pygame.mixer.music.play(-1)
     except: pass
 
@@ -119,41 +122,49 @@ def main():
     shake_timer, boss_parry_count = 0, 0
     boss_state = STATE_NORMAL
     boss_wave_count, boss_wave_timer = 0, 0
+    current_safe_x = 0
     spawn_timer, spawn_count = 0, 0 
-    current_direction, parry_success = "up", False
+    current_direction, parry_success, parry_active = "up", False, True
     anim_frame, anim_timer, prev_state = 0, 0, ""
-    
-    MAX_PARRY_COOLDOWN = 3 * FPS
-    MISS_DURATION = int(1.5 * FPS)
 
-    while True:
+    MAX_PARRY_COOLDOWN = 3 * FPS
+    MISS_DURATION = int(0.5 * FPS)
+
+    running = True
+    while running:
         clock.tick(FPS)
         
         # --- 난이도 계산 ---
         diff_mult = 1.0
-        if score >= 80: diff_mult = 1.4
-        elif score >= 40: diff_mult = 1.3
-        elif score >= 20: diff_mult = 1.1
-        spawn_rate = int((BASE_SPAWN_RATE / 1.6 if boss_state != STATE_NORMAL else BASE_SPAWN_RATE) / diff_mult)
+        if score >= 80: diff_mult = 2
+        elif score >= 40: diff_mult = 1.8
+        elif score >= 20: diff_mult = 1.5
+        base_val = BASE_SPAWN_RATE / 1.6 if boss_state != STATE_NORMAL else BASE_SPAWN_RATE
+        spawn_rate = max(MIN_SPAWN_RATE, int(base_val / diff_mult))
+
         
-        # --- 입력 처리 ---
-        keys = pygame.key.get_pressed()
-        moving = False
-        if parry_timer == 0: 
-            if keys[pygame.K_LEFT]:  moving = True; player.x -= 5
-            if keys[pygame.K_RIGHT]: moving = True; player.x += 5
-            if keys[pygame.K_UP]:    current_direction = "up"; moving = True; player.y -= 5
-            if keys[pygame.K_DOWN]:  moving = True; player.y += 5 
-        player.clamp_ip(pygame.Rect(0, HUD_HEIGHT, WIDTH, HEIGHT - HUD_HEIGHT))
-
-        # --- 애니메이션 상태 결정 ---
-        state = "parry" if parry_timer > 0 else (f"walk_{current_direction}" if moving else f"idle_{current_direction}")
-        if state != prev_state: anim_frame = 0; prev_state = state
-
+        # --- 이벤트 및 입력 처리 ---
         for e in pygame.event.get():
             if e.type == pygame.QUIT: pygame.quit(); sys.exit()
             if e.type == pygame.KEYDOWN and e.key == pygame.K_SPACE and parry_cooldown == 0:
-                parry_timer, parry_success = PARRY_DURATION, False
+                if parry_timer == 0 or not parry_active:
+                    parry_timer = PARRY_DURATION
+                    parry_success = False
+                    parry_active = True
+
+        keys = pygame.key.get_pressed()
+        moving = False
+        move_speed = 2 if parry_timer > 0 else 5
+
+        if keys[pygame.K_LEFT]:  moving = True; player.x -= move_speed
+        if keys[pygame.K_RIGHT]: moving = True; player.x += move_speed
+        if keys[pygame.K_UP]:    current_direction = "up"; moving = True; player.y -= move_speed
+        if keys[pygame.K_DOWN]:  moving = True; player.y += move_speed 
+        
+        player.clamp_ip(pygame.Rect(0, HUD_HEIGHT, WIDTH, HEIGHT - HUD_HEIGHT))
+
+        state = "parry" if parry_timer > 0 else (f"walk_{current_direction}" if moving else f"idle_{current_direction}")
+        if state != prev_state: anim_frame = 0; prev_state = state
 
         # --- 타이머 업데이트 ---
         if invincible > 0: invincible -= 1
@@ -162,21 +173,17 @@ def main():
         if shake_timer > 0: shake_timer -= 1
         if parry_cooldown > 0: parry_cooldown -= 1
         if miss_timer > 0: miss_timer -= 1
-        if success_timer > 0: success_timer -= 1 # [추가] 성공 타이머 감소
+        if success_timer > 0: success_timer -= 1
 
         if state == "parry":
-            # [핵심] 패링 유지 시간과 애니메이션 프레임을 직접 동기화
-            # (전체 유지시간 - 남은 시간) / 전체 유지시간 = 진행률(0.0 ~ 1.0)
             if PLAYER_ANIMATIONS and "parry" in PLAYER_ANIMATIONS:
                 frames = PLAYER_ANIMATIONS["parry"]
+                # PARRY_DURATION이 20이 되면, 애니메이션도 20프레임에 맞춰 늘어남
                 progress = (PARRY_DURATION - parry_timer) / PARRY_DURATION
-                anim_frame = int(progress * len(frames))
-                # 마지막 프레임에서 멈추지 않고 범위 내에 있게 제한
-                anim_frame = min(anim_frame, len(frames) - 1)
+                anim_frame = min(int(progress * len(frames)), len(frames) - 1)
         else:
-            # 일반 걷기/대기 애니메이션은 기존 timer 방식 유지
             anim_timer += 1
-            if anim_timer >= 6: # 일반 속도 6
+            if anim_timer >= 6:
                 if PLAYER_ANIMATIONS and state in PLAYER_ANIMATIONS:
                     anim_frame = (anim_frame + 1) % len(PLAYER_ANIMATIONS[state])
                 anim_timer = 0
@@ -184,21 +191,24 @@ def main():
         if parry_timer > 0: 
             parry_timer -= 1
             if parry_timer == 0 and not parry_success:
-                miss_timer, parry_cooldown = MISS_DURATION, MAX_PARRY_COOLDOWN
+                miss_timer = int(0.5 * FPS)
+                parry_cooldown = MAX_PARRY_COOLDOWN
+                combo_count = 0  # [추가] 패링 헛방 시 콤보 초기화
 
         # --- 보스 상태 관리 ---
         if boss_state == STATE_NORMAL and score >= BOSS_TRIGGER_SCORE:
             boss_state, enemies, boss_parry_count, boss_wave_count, boss_wave_timer = STATE_PHASE1, [], 0, 0, 0
 
-        # --- 스폰 로직 (최적화) ---
+        # --- 스폰 로직 ---
         if boss_state == STATE_PHASE1:
+            if boss_wave_timer == 0 and boss_wave_count < 5:
+                current_safe_x = random.choice(BOSS_WAVE_POSITIONS) * WIDTH
             boss_wave_timer += 1
             if boss_wave_timer >= WAVE_INTERVAL and boss_wave_count < 5:
                 boss_wave_timer = 0
-                safe_x = BOSS_WAVE_POSITIONS[boss_wave_count] * WIDTH
                 for row_offset in [0, 40, 80]: 
                     for x in range(0, WIDTH, 40):
-                        if abs(x - safe_x) > 40: 
+                        if abs(x - current_safe_x) > 40: 
                             enemies.append(spawn_enemy(boss_state, BASE_ENEMY_SPEED_MIN, BASE_ENEMY_SPEED_MAX, diff_mult, x, row_offset))
                 boss_wave_count += 1
             if boss_wave_count >= 5 and not enemies:
@@ -211,7 +221,8 @@ def main():
                 enemies.append(spawn_enemy(boss_state, BASE_ENEMY_SPEED_MIN, BASE_ENEMY_SPEED_MAX, diff_mult, tx))
         elif boss_state == STATE_PHASE2:
             spawn_timer += 1
-            if spawn_timer >= int(spawn_rate * 0.7):
+            current_p2_rate = max(MIN_SPAWN_RATE, int((spawn_rate * 0.7) / diff_mult))
+            if spawn_timer >= current_p2_rate:
                 spawn_timer = 0
                 enemies.append(spawn_enemy(boss_state, BASE_ENEMY_SPEED_MIN, BASE_ENEMY_SPEED_MAX, diff_mult))
 
@@ -220,32 +231,38 @@ def main():
         if boss_state != STATE_NORMAL and player.colliderect(boss_rect) and invincible == 0:
             lives -= 1; invincible = 60; combo_count = 0
             if lives <= 0: 
-                if game_over_screen(score): main(); return
+                if game_over_screen(score): return "RESTART"
+                else: return "QUIT"
 
         for enemy in enemies[:]:
             enemy["rect"].x += enemy["vel"][0]
             enemy["rect"].y += enemy["vel"][1]
             if player.colliderect(enemy["rect"]):
-                if parry_timer > 0:
+                if parry_timer > 0 and parry_active: 
                     parry_success = True
-                    success_timer = int(1.5 * FPS) # [추가] Success 메시지 출력
+                    parry_active = False # [핵심] 한 명을 쳤으므로 이제 판정을 종료함!
+
+                    success_timer = int(0.5 * FPS)
                     miss_timer = 0
-                          # 1. 성공 플래그를 True로 설정
-                    enemies.remove(enemy)     # 2. 적을 리스트에서 제거 # redundant but safe
-                    # [최적화] 보스전 점수 중지
+                    enemies.remove(enemy)
+
                     if boss_state == STATE_NORMAL: score += int(1 * (1.2 ** combo_count))
-                    combo_count += 1; combo_timer = COMBO_TIMEOUT; parry_timer = 0
+                    combo_count += 1; combo_timer = COMBO_TIMEOUT
+                    
                     if boss_state != STATE_NORMAL: boss_parry_count += 1
                     parry_effects.append({"pos": player.center, "radius": 10, "max_radius": 120})
+
                     if boss_parry_count >= 10:
                         if boss_state == STATE_PHASE1: boss_state, boss_parry_count, enemies = STATE_PHASE2, 0, []
                         elif boss_state == STATE_PHASE2: 
-                            if game_over_screen(score, "VICTORY!", GREEN): main(); return
+                            if game_over_screen(score, "VICTORY!", GREEN): return "RESTART"
+                            else: return "QUIT"
                 elif invincible == 0:
                     lives -= 1; invincible = 60; combo_count = 0
                     shake_timer, parry_cooldown = 15, 0
                     if lives <= 0: 
-                        if game_over_screen(score): main(); return
+                        if game_over_screen(score): return "RESTART"
+                        else: return "QUIT"
             elif enemy["rect"].top > HEIGHT or enemy["rect"].right < 0 or enemy["rect"].left > WIDTH:
                 enemies.remove(enemy)
                 if boss_state == STATE_NORMAL: score += 1
@@ -253,6 +270,22 @@ def main():
         # --- 렌더링 ---
         offset = (random.randint(-6, 6), random.randint(-6, 6)) if shake_timer > 0 else (0, 0)
         screen.fill(GRAY)
+        if boss_state == STATE_PHASE1 and boss_wave_count < 5 and boss_wave_timer > (WAVE_INTERVAL - 60):
+            # [수정] 가이드 영역의 너비를 80으로 설정 (abs 조건의 40 * 2)
+            guide_width = 80 
+            guide_x = current_safe_x - (guide_width // 2) # 중앙 정렬을 위해 너비의 절반을 뺌
+            
+            # 1. 영역을 강조하기 위해 약간 투명한 초록색 박스를 그림
+            # (투명도를 위해 별도의 Surface를 사용합니다)
+            guide_surf = pygame.Surface((guide_width, HEIGHT - HUD_HEIGHT), pygame.SRCALPHA)
+            guide_surf.fill((0, 255, 0, 60)) # 초록색, 투명도 60 (0~255)
+            screen.blit(guide_surf, (guide_x, HUD_HEIGHT))
+            
+            # 2. 영역의 양 끝에 얇은 선을 그려서 경계를 명확히 함
+            pygame.draw.line(screen, GREEN, (guide_x, HUD_HEIGHT), (guide_x, HEIGHT), 2)
+            pygame.draw.line(screen, GREEN, (guide_x + guide_width, HUD_HEIGHT), (guide_x + guide_width, HEIGHT), 2)
+            
+            draw_text("SAFE", current_safe_x, (HUD_HEIGHT + HEIGHT) // 2, FONT_HUD, GREEN, center=True)
         for e in enemies: pygame.draw.rect(screen, RED, e["rect"].move(offset))
         if boss_state != STATE_NORMAL: pygame.draw.rect(screen, BLACK, boss_rect.move(offset))
         for fx in parry_effects[:]:
@@ -267,14 +300,9 @@ def main():
             else: pygame.draw.rect(screen, BLUE, player.move(offset))
             if DEBUG_HITBOX: pygame.draw.rect(screen, GREEN, player.move(offset), 2)
 
-        if success_timer > 0:
-            # 성공 시 초록색 Success!
-            draw_text("Success!", player.centerx, player.top - 30, FONT_HUD, GREEN, center=True)
-        elif miss_timer > 0:
-            # 실패 시 빨간색 Miss!
-            draw_text("Miss!", player.centerx, player.top - 30, FONT_HUD, RED, center=True)
+        if success_timer > 0: draw_text("Success!", player.centerx, player.top - 30, FONT_HUD, GREEN, center=True)
+        elif miss_timer > 0: draw_text("Miss!", player.centerx, player.top - 30, FONT_HUD, RED, center=True)
 
-        # 패링 바 렌더링
         bar_x, bar_y, bar_w, bar_h = player.x, player.bottom + 5, PLAYER_W, 6
         pygame.draw.rect(screen, (100, 100, 100), (bar_x, bar_y, bar_w, bar_h))
         fill_w = bar_w if parry_cooldown == 0 else int(bar_w * ((MAX_PARRY_COOLDOWN - parry_cooldown) / MAX_PARRY_COOLDOWN))
@@ -284,12 +312,23 @@ def main():
         draw_text(f"Lives: {'♥ ' * lives}", 15, 12, FONT_HUD, RED)
         draw_text(f"Score: {score}", WIDTH//2, 12, FONT_HUD, WHITE, center=True)
         draw_text(f"Combo: {combo_count}", WIDTH - 150, 12, FONT_HUD, GREEN)
-        fps_text = f"FPS: {int(clock.get_fps())}"
-        draw_text(fps_text, 15, 40, FONT_HUD, WHITE) # 좌표 (15, 40)은 적절히 조절하세요.
-        
-        if boss_state == STATE_PHASE2: draw_text(f"Boss Parry: {boss_parry_count}/10", WIDTH//2, 55, FONT_HUD, WHITE, center=True)
+        draw_text(f"FPS: {int(clock.get_fps())}", 15, 40, FONT_HUD, WHITE)
+        if boss_state == STATE_PHASE1:
+            # 보스 1페이지일 때: 현재 몇 번째 웨이브인지 표시 (0부터 시작하므로 +1)
+            draw_text(f"Wave: {boss_wave_count + 1}/5", WIDTH//2, 55, FONT_HUD, WHITE, center=True)
+        elif boss_state == STATE_PHASE2:
+            # 보스 2페이지일 때: 패링 횟수 표시
+            draw_text(f"Boss Parry: {boss_parry_count}/10", WIDTH//2, 55, FONT_HUD, WHITE, center=True)
 
         pygame.display.flip()
+
+def main():
+    # 게임을 실행하는 메인 래퍼 루프
+    while True:
+        result = play_game()
+        if result == "QUIT":
+            break
+        # "RESTART"일 경우 루프가 다시 돌아 play_game()이 처음부터 실행됨
 
 if __name__ == "__main__":
     main()
