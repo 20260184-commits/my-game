@@ -148,7 +148,7 @@ except:
 
 
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("PARRY - Final Edition")
+pygame.display.set_caption("Pyring")
 clock = pygame.time.Clock()
 
 FONT_HUD = pygame.font.SysFont("arial", 24, bold=True)
@@ -161,7 +161,7 @@ PLAYER_ANIMATIONS = load_player_sprites()
 def main_menu(settings):
     while True:
         screen.fill(DARK_GRAY)
-        draw_text("PARRY", WIDTH//2, 100, FONT_BIG, WHITE, center=True)
+        draw_text("Pyring", WIDTH//2, 100, FONT_BIG, WHITE, center=True)
         btn_start = Button(WIDTH//2-100, 250, 200, 50, "START", BLUE, (70, 140, 250), FONT_MENU)
         btn_settings = Button(WIDTH//2-100, 320, 200, 50, "SETTINGS", GRAY, (80, 80, 80), FONT_MENU)
         btn_quit = Button(WIDTH//2-100, 390, 200, 50, "QUIT", RED, (250, 70, 70), FONT_MENU)
