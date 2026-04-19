@@ -8,13 +8,13 @@ import math
 # =============================================================================
 # 1. 설정 및 상수
 # =============================================================================
-MUSIC_FILE = r"week7\assets\sounds\BBGGMM.wav" 
-BG_FILE = r"week7\assets\images\background.png" # 상대 경로 설정
-BOSS_IMG_FILE = r"week7/assets/images/boss.png"    # [추가] 보스 이미지 경로
-PARRY_SFX_FILE = r"week7\assets\sounds\parry.wav" # [추가] 패링 성공 소리 파일 경로
-MISS_SFX_FILE = r"week7\assets\sounds\miss.wav"
-DAMAGE_SFX_FILE = r"week7\assets\sounds\damage.wav"
-UI_CLICK_SFX_FILE = r"week7\assets\sounds\click.ogg" # [추가] UI 클릭 소리 경로
+MUSIC_FILE = r"assets\sounds\BBGGMM.wav" 
+BG_FILE = r"assets\images\background.png" # 상대 경로 설정
+BOSS_IMG_FILE = r"assets/images/boss.png"    # [추가] 보스 이미지 경로
+PARRY_SFX_FILE = r"assets\sounds\parry.wav" # [추가] 패링 성공 소리 파일 경로
+MISS_SFX_FILE = r"assets\sounds\miss.wav"
+DAMAGE_SFX_FILE = r"assets\sounds\damage.wav"
+UI_CLICK_SFX_FILE = r"assets\sounds\click.ogg" # [추가] UI 클릭 소리 경로
 BOSS_SIZE = 130  # [추가] 보스 크기 (기존 80 -> 130으로 약 50픽셀 증가)
 BOSS_TRIGGER_SCORE = 200  
 BASE_ENEMY_SPEED = 4
