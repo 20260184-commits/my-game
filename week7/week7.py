@@ -124,7 +124,6 @@ def game_over_screen(score, title="GAME OVER", color=RED):
     overlay = pygame.Surface((WIDTH, HEIGHT)); overlay.set_alpha(150); overlay.fill(BLACK)
     screen.blit(overlay, (0, 0))
     draw_text(title, WIDTH//2, 220, FONT_BIG, color, center=True)
-    draw_text(f"Score: {score}", WIDTH//2, 310, FONT_MSG, WHITE, center=True)
     draw_text("Press [R] to Restart | [Q] to Quit", WIDTH//2, 400, FONT_HUD, WHITE, center=True)
     pygame.display.flip()
     while True:
@@ -500,11 +499,12 @@ def play_game(settings):
 
         pygame.draw.rect(screen, DARK_GRAY, (0, 0, WIDTH, HUD_HEIGHT))
         draw_text(f"Lives: {'♥ ' * lives}", 15, 12, FONT_HUD, RED)
-        draw_text(f"Score: {score}", WIDTH//2, 12, FONT_HUD, WHITE, center=True)
+        if score < BOSS_TRIGGER_SCORE:
+            draw_text(f"Score: {score}/{BOSS_TRIGGER_SCORE}", WIDTH//2, 12, FONT_HUD, WHITE, center=True)
         draw_text(f"Combo: {combo_count}", WIDTH - 150, 12, FONT_HUD, GREEN)
         if settings.show_fps: draw_text(f"FPS: {int(clock.get_fps())}", 15, 40, FONT_HUD, WHITE)
-        if boss_state == STATE_PHASE1: draw_text(f"Wave: {min(boss_wave_count + 1, 5)}/5", WIDTH//2, 55, FONT_HUD, WHITE, center=True)
-        elif boss_state == STATE_PHASE2: draw_text(f"Boss Parry: {boss_parry_count}/10", WIDTH//2, 55, FONT_HUD, WHITE, center=True)
+        if boss_state == STATE_PHASE1: draw_text(f"Wave: {boss_wave_count}/5", WIDTH//2, 12, FONT_HUD, WHITE, center=True)
+        elif boss_state == STATE_PHASE2: draw_text(f"Boss Parry: {boss_parry_count}/10", WIDTH//2, 12, FONT_HUD, WHITE, center=True)
 
         pygame.display.flip()
 
@@ -526,6 +526,7 @@ def main():
                 state = "MENU"  # 메인 메뉴로 이동
             elif result == "QUIT": 
                 break
-
+    pygame.quit() 
+    sys.exit()
 if __name__ == "__main__":
     main()
