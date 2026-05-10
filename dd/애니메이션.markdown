@@ -1,0 +1,42 @@
+A : 애니메이션
+1. 200 x 128 100ms
+Attack1 (4) (3)
+Attack2 (4) (3)
+Death (7)
+Fall (2)
+Idle (4)
+Jump (2)
+Run (8)
+Take Hit(3)
+
+2. 200 x 122 100ms
+Attack1 (6) (5)
+Attack2 (6) (5)
+Death (6)
+Fall (2)
+Idle (8)
+Jump (2)
+Run (8)
+Take Hit(4)
+
+
+
+B : 애니메이션
+1. 90 x 58 100ms
+Attack1 (16) (12)
+Death (8)
+Idle (9)
+Run (9)
+Take Hit(3)
+
+C : 애니메이션
+1. 162 x 101 100ms
+Attack1 (7) (5)
+Attack2 (7) (3)
+Attack3 (8) (5)
+Death (7)
+Fall (3)
+Idle (10)
+Jump (3)
+Run (8)
+Take Hit(3)
