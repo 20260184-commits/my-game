@@ -115,7 +115,7 @@ class Entity(pygame.sprite.Sprite):
         self.animations = {}
         data = CHAR_DATA.get(char_id, CHAR_DATA["A1"])
         for state, (suffix, count) in data.items():
-            path = os.path.join("assets", f"{self.char_id}_{suffix}.png")
+            path = os.path.join("dd\\assets", f"{self.char_id}_{suffix}.png")
             self.animations[state] = load_sprite_sheet(path, count)
 
         self.image = self.animations["IDLE"][0]
@@ -127,26 +127,26 @@ class Entity(pygame.sprite.Sprite):
     def take_damage(self, amount, attacker):
         if self.state == "DEATH": 
             return False
-        
-        # 🌟 가드 판정: 뒤쪽 키를 누르고 있는가?
+    
+    # 🌟 가드 판정 일반화 (플레이어인 경우에만 키 입력 체크)
         is_guarding = False
-        if self.char_id == "A1":
+        if self.char_id == "A1": # 플레이어
             keys = pygame.key.get_pressed()
             if (self.facing_right and keys[pygame.K_a]) or (not self.facing_right and keys[pygame.K_d]):
                 is_guarding = True
-        
+    
         if is_guarding:
             final_damage = amount * 0.5
-            knockback_power = 3 
-            self.guard_effect_timer = 10 # 🌟 가드 이펙트 10프레임 동안 발생
+            knockback_power = 15 # 가드 시 살짝 밀림
+            self.guard_effect_timer = 10 # 가드 이펙트 출력 시간
             print("🛡️ 가드 성공!")
         else:
             final_damage = amount
-            knockback_power = 10
+            knockback_power = 20 # 🌟 [강화] 넉백 파워 대폭 증가
             print("💥 정타!")
 
         self.hp -= final_damage
-        
+    
         if self.hp <= 0:
             self.hp = 0
             self.state = "DEATH"
@@ -156,8 +156,9 @@ class Entity(pygame.sprite.Sprite):
             self.state = "HIT"
             self.timer = 0
             self.is_attacking = False
-            # 🌟 가드 여부에 관계없이 피격 상태(HIT)가 되면 
-            # 아주 짧은 시간 동안은 update에서 vel_x가 0이 되거나 넉백이 적용됨
+        # 🌟 [추가] 피격 경직 시간 설정 (넉백이 유지되는 시간)
+            self.hit_stun_timer = 15 if not is_guarding else 5 
+        # 넉백 방향 설정
             self.vel_x = -knockback_power if self.facing_right else knockback_power
             
         return True
@@ -218,7 +219,7 @@ class Entity(pygame.sprite.Sprite):
     def apply_physics(self):
         self.vel_y += GRAVITY
         self.rect.y += self.vel_y
-        
+    
         if self.rect.bottom >= GROUND_Y:
             self.rect.bottom = GROUND_Y
             self.vel_y = 0
@@ -226,14 +227,23 @@ class Entity(pygame.sprite.Sprite):
         else:
             self.is_grounded = False
 
+    # 🌟 [수정] 상태에 따른 마찰력 차등 적용
+        if self.state == "DASH":
+            friction = 1.0 # 대쉬 중엔 속도 유지
+        elif self.state == "HIT":
+            friction = 0.98 # 🌟 피격 중엔 마찰력을 줄여 더 멀리 밀려나게 함
+        else:
+            friction = 0.92 # 일반 이동 시엔 빠르게 멈춤
+
+        self.vel_x *= friction
+        if abs(self.vel_x) < 0.1: self.vel_x = 0
+
         self.rect.x += self.vel_x
 
-        # 🌟 [수정] 이미지 여백을 고려한 벽 충돌 처리
-        # 왼쪽 벽: 0이 아니라 WALL_MARGIN에서 멈춤
+        # 벽 충돌 처리
         if self.rect.left < WALL_MARGIN:
             self.rect.left = WALL_MARGIN
             self.vel_x = 0
-        # 오른쪽 벽: SCREEN_WIDTH가 아니라 SCREEN_WIDTH - WALL_MARGIN에서 멈춤
         elif self.rect.right > SCREEN_WIDTH - WALL_MARGIN:
             self.rect.right = SCREEN_WIDTH - WALL_MARGIN
             self.vel_x = 0
@@ -243,9 +253,14 @@ class Entity(pygame.sprite.Sprite):
         if self.buffer_timer > 0: self.buffer_timer -= 1
         else: self.input_buffer = None
         if self.dash_cooldown_timer > 0: self.dash_cooldown_timer -= 1
-
         if hasattr(self, 'guard_effect_timer') and self.guard_effect_timer > 0:
-            self.guard_effect_timer -= 1
+                self.guard_effect_timer -= 1
+
+    # 🌟 [추가] 피격 경직 타이머 처리
+        if hasattr(self, 'hit_stun_timer') and self.hit_stun_timer > 0:
+            self.hit_stun_timer -= 1
+            if self.hit_stun_timer <= 0 and self.state == "HIT":
+                self.state = "IDLE" # 경직이 끝나면 IDLE로 복귀
 
 
         if self.state == "DASH":
@@ -294,6 +309,13 @@ class Entity(pygame.sprite.Sprite):
             if self.timer >= total_frames:
                 self.state, self.timer, self.is_attacking = "IDLE", 0, False
                 self.execute_buffer()
+
+        elif self.state == "HIT":
+        # 🌟 피격 애니메이션 처리
+            frames = self.animations.get("HIT", self.animations["IDLE"])
+            self.frame_index = 0 # 피격 시 첫 프레임 고정 혹은 간단한 루프
+            self.image = frames[self.frame_index]
+            self.hitbox = pygame.Rect(0, 0, 0, 0)
         
         else: 
             if not self.is_grounded:
@@ -386,24 +408,23 @@ def main():
     while running:
         if hitstop_timer > 0:
             hitstop_timer -= 1
-            # 히트스탑 중에는 업데이트를 건너뛰어 화면을 멈춤
         else:
             keys = pygame.key.get_pressed()
-            if player.state != "DASH" and player.state != "HIT": 
-                if not player.is_attacking:
+            if player.state != "DASH":
+        # 🌟 [수정] HIT 상태일 때는 이동 입력을 완전히 무시 (넉백 유지)
+                if not player.is_attacking and player.state != "HIT": 
                     if keys[pygame.K_a]:
                         player.vel_x = -BACK_WALK_SPEED if player.facing_right else -WALK_SPEED
                     elif keys[pygame.K_d]:
-                        player.vel_x = WALK_SPEED if not player.facing_right else WALK_SPEED # (이 부분은 단순화해서 작성
+                        player.vel_x = WALK_SPEED if player.facing_right else BACK_WALK_SPEED
                     else:
                         player.vel_x = 0
+                elif player.state == "HIT":
+                    pass # 넉백 속도가 apply_physics에서 처리됨
                 else:
                     player.vel_x = 0
-            else:
             # 대쉬 중일 때는 대쉬 속도가 적용되고, 
             # HIT 상태(가드 포함)일 때는 속도를 0으로 만들어 멈추게 함
-                if player.state != "DASH":
-                    player.vel_x = 0
 
             for event in pygame.event.get():
                 if event.type == pygame.QUIT: running = False
