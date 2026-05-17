@@ -2,6 +2,7 @@ import pygame
 import sys
 import os
 import random
+import math  # 🌟 이 줄을 반드시 추가해야 합니다!
 
 # --- 설정 및 상수 ---
 FPS = 60
@@ -11,59 +12,199 @@ SCALE_FACTOR = 4
 TOP_CROP = 20 
 
 GRAVITY = 0.8
-WALK_SPEED = 6
+WALK_SPEED = 8
 BACK_WALK_SPEED = 3    # 🌟 [추가] 후진 속도 (더 느리게)
-JUMP_FORCE = -16
-GROUND_Y = 650
+JUMP_FORCE = -20
+GROUND_Y = 550
 
-DASH_SPEED = 16
+DASH_SPEED = 20
+BACK_DASH_SPEED = 10
 DASH_DURATION = 12
 DASH_COOLDOWN = 30
 DOUBLE_TAP_TIME = 250
-BUFFER_WINDOW = 12 
+BUFFER_WINDOW = 30
 
-WALL_MARGIN = -400
+WALL_MARGIN = 0
+CAMERA_X = 0
+VIRTUAL_WALL_DIST = SCREEN_WIDTH * 0.8  # 캐릭터 간 최대 거리 (화면 너비의 80%)
+
+
+STAGE_SEQUENCE = [
+    {"id": "B1", "hp": 60,  "name": "SCOUT B1"},
+    {"id": "A2", "hp": 120, "name": "KNIGHT A2"},
+    {"id": "C1", "hp": 90,  "name": "ASSASSIN C1"},
+    {"id": "A2", "hp": 300, "name": "THE MASKED MASTER", "boss": True} # 보스는 A2 강화형
+]
 
 # 🌟 [추가] 전투 상수
-HIT_STOP_DURATION = 5  # 히트스탑 지속 프레임 (타격감)
+HIT_STOP_LIGHT = 4  # 약공격: 빠르고 경쾌하게
+HIT_STOP_HEAVY = 12 # 강공격: 묵직하고 강력하게
 PLAYER_MAX_HP = 100
 ENEMY_MAX_HP = 50
+DASH_CANCEL_STUN_BONUS = 60  # 🌟 대쉬 캔슬 시 추가 경직 (약 1초)
+
+KNOCKBACK_HIT = 12    # 일반 피격 넉백
+KNOCKBACK_GUARD = 10  # 가드 피격 넉백
+
+COMBO_SCALING = {
+    1: 1.0, 2: 1.0, 
+    3: 0.9, 4: 0.9, 
+    5: 0.7, 6: 0.5, 7: 0.4 
+}
+MIN_SCALING = 0.4
+
 
 HITBOX_CONFIG = {
-    "LIGHT": {
-        "offset": 0, 
-        "w": 80, 
-        "h": 30, 
-        "y_off": 0, # 🌟 [수정] 바닥에서 60픽셀 위로 (가슴 높이)
-        "start": 3, 
-        "end": 6
+    "LIGHT": { 
+        "offset": 0, "w": 80, "h": 30, "y_off": 0, 
+        "start": 7, # 🌟 3 -> 7 (선딜 대폭 증가: 이제 바로 안 나감)
+        "end": 10   # 🌟 6 -> 10
     },
-    "HEAVY": {
-        "offset": 35, 
-        "w": 50, 
-        "h": 120, 
-        "y_off": 0, # 🌟 [수정] 바닥에서 40픽셀 위로 (박스가 크므로 낮게 설정)
-        "start": 6, 
-        "end": 12
+    "HEAVY": { 
+        "offset": 35, "w": 50, "h": 120, "y_off": 0, 
+        "start": 12, # 🌟 6 -> 12 (묵직한 선딜레이)
+        "end": 17    # 🌟 12 -> 17
     }
 }
 
 CHAR_DATA = {
-    "A1": {
-        "IDLE": ("Idle", 4), "RUN": ("Run", 8),
-        "ATK1": ("Attack1", 4), "ATK2": ("Attack2", 4),
-        "JUMP": ("Jump", 2), "FALL": ("Fall", 2),
-        "HIT": ("Take Hit", 3), "DEATH": ("Death", 7),
+     "A1": { # 플레이어
+        "IDLE": ("Idle", 4, None), "RUN": ("Run", 8, None),
+        "ATK1": ("Attack1", 4, 3), "ATK2": ("Attack2", 4, 3),
+        "JUMP": ("Jump", 2, None), "FALL": ("Fall", 2, None),
+        "HIT": ("Take Hit", 3, None), "DEATH": ("Death", 7, None),
     },
-    "B1": { # 적 캐릭터 B1 데이터
-        "IDLE": ("Idle", 9), "RUN": ("Run", 9),
-        "ATK1": ("Attack1", 16), # B1은 약공격만 있음
-        "HIT": ("Take Hit", 3), "DEATH": ("Death", 8),
+    "B1": { # 1스테이지: 정찰병
+        "IDLE": ("Idle", 9, None), "RUN": ("Run", 9, None),
+        "ATK1": ("Attack1", 16, 12), "HIT": ("Take Hit", 3, None), "DEATH": ("Death", 8, None),
     },
+    "A2": { # 2스테이지: 중갑 전사 (6장 중 5번이 히트)
+        "IDLE": ("Idle", 8, None), "RUN": ("Run", 8, None),
+        "ATK1": ("Attack1", 6, 5), "ATK2": ("Attack2", 6, 5),
+        "JUMP": ("Jump", 2, None), "FALL": ("Fall", 2, None),
+        "HIT": ("Take Hit", 4, None), "DEATH": ("Death", 6, None),
+    },
+    "C1": { # 3스테이지: 암살자 (7장 중 5번/3번이 히트)
+        "IDLE": ("Idle", 10, None), "RUN": ("Run", 8, None),
+        "ATK1": ("Attack1", 7, 5),  # 약공격용
+        "ATK2": ("Attack2", 7, 3),  # (사용 안 함 혹은 특수기로 활용 가능)
+        "ATK3": ("Attack3", 8, 5),  # 🌟 강공격용 (Attack3 사용)
+        "JUMP": ("Jump", 3, None), "FALL": ("Fall", 3, None),
+        "HIT": ("Take Hit", 3, None), "DEATH": ("Death", 7, None),
+    }
 }
 
-LIGHT_ATK_TOTAL_FRAMES = 14
-HEAVY_ATK_TOTAL_FRAMES = 22
+AI_BRAIN_CONFIG = {
+    "B1": { 
+        "guard_prob": 0.2, "back_catch_prob": 0.7, 
+        "jump_in_prob": 0.05, # 1단계는 그냥 뚜벅뚜벅 걸어옴
+        "dash_back_prob": 0.1, "aggressive_dash": 0.3
+    },
+    "A2": { 
+        "guard_prob": 0.7, "back_catch_prob": 0.7,
+        "jump_in_prob": 0.1,  # 중갑병은 무게감 있게 땅에서 걸어옴
+        "dash_back_prob": 0.2, "aggressive_dash": 0.5
+    },
+    "C1": { 
+        "guard_prob": 0.3, "back_catch_prob": 0.7,
+        "jump_in_prob": 0.4,  # 암살자는 공중 접근을 자주 함
+        "dash_back_prob": 0.6, "aggressive_dash": 0.8
+    },
+    "BOSS": { 
+        "guard_prob": 0.8, "back_catch_prob": 0.7,
+        "jump_in_prob": 0.2, 
+        "dash_back_prob": 0.5, "aggressive_dash": 0.9
+    }
+}
+
+
+class PixelGuard:
+    def __init__(self):
+        self.pixel_scale = SCALE_FACTOR # 전역 SCALE_FACTOR 사용
+        self.width = 32
+        self.height = 64
+        self.particles = []
+
+    def draw(self, surface, cx, cy, facing,  y_offset=100):
+        small_surf = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+        for y in range(self.height):
+            dy = y - (self.height // 2)
+            base_x = 22 - (dy * dy * 0.015) 
+            noise = random.randint(-1, 1)
+            if random.random() < 0.1: noise = random.randint(-3, 3)
+            x = int(base_x + noise)
+            if 0 <= x < self.width:
+                pygame.draw.rect(small_surf, (0, 100, 255, 150), (x - 8, y, 10, 1))
+                pygame.draw.rect(small_surf, (150, 255, 255, 255), (x - 3, y, 4, 1))
+                if random.random() < 0.5:
+                    small_surf.set_at((x, y), (255, 255, 255, 255))
+
+        if random.random() < 0.4:
+            self.particles.append([random.randint(10, 25), self.height, random.uniform(1, 3)])
+        for p in self.particles[:]:
+            p[1] -= p[2]
+            if p[1] < 0: self.particles.remove(p)
+            else: small_surf.set_at((int(p[0]), int(p[1])), (0, 200, 255, 255))
+
+        scaled_w = self.width * self.pixel_scale
+        scaled_h = self.height * self.pixel_scale
+        scaled_surf = pygame.transform.scale(small_surf, (scaled_w, scaled_h))
+
+        if facing == -1:
+            scaled_surf = pygame.transform.flip(scaled_surf, True, False)
+            offset_x = -70 - (scaled_w // 2)
+        else:
+            offset_x = 70 - (scaled_w // 2)
+            
+        surface.blit(scaled_surf, (cx + offset_x, cy - (scaled_h // 2) + y_offset))
+
+class ComboDisplay:
+    def __init__(self):
+        self.font = pygame.font.SysFont("impact", 60, bold=True) # 임팩트 있는 폰트
+        self.timer = 0
+        self.active = False
+        self.combo_count = 0
+
+    def trigger(self, count):
+        self.combo_count = count
+        self.timer = 20  # 애니메이션 지속 프레임
+        self.active = True
+
+    def update(self):
+        if self.timer > 0:
+            self.timer -= 1
+        else:
+            self.active = False
+
+    def draw(self, surface, player_rect):
+        if not self.active or self.combo_count <= 1: # 2타부터 콤보 표시
+            return
+
+        # 🌟 팝 애니메이션 계산: 타이머가 줄어들면서 크기가 커졌다가 작아짐
+        # 0~20프레임 동안 scale이 1.0 -> 1.5 -> 1.0으로 변함
+        scale = 1.0 + (math.sin((self.timer / 20) * 3.14) * 0.5)
+        
+        text_surf = self.font.render(f"{self.combo_count} HIT!", True, (255, 200, 0)) # 금색
+        
+        # 그림자 효과 추가
+        shadow_surf = self.font.render(f"{self.combo_count} HIT!", True, (0, 0, 0))
+        
+        # 크기 조절
+        w, h = text_surf.get_size()
+        scaled_w, scaled_h = int(w * scale), int(h * scale)
+        
+        text_surf = pygame.transform.scale(text_surf, (scaled_w, scaled_h))
+        shadow_surf = pygame.transform.scale(shadow_surf, (scaled_w, scaled_h))
+
+        # 플레이어 머리 위쪽 약간 오른쪽에 배치
+        pos_x = player_rect.centerx + 60
+        pos_y = player_rect.bottom - 300 - (scaled_h // 2)
+
+        surface.blit(shadow_surf, (pos_x + 4, pos_y + 4)) # 그림자 먼저
+        surface.blit(text_surf, (pos_x, pos_y))
+
+LIGHT_ATK_TOTAL_FRAMES = 18
+HEAVY_ATK_TOTAL_FRAMES = 26
 
 def load_sprite_sheet(filename, frame_count):
     try:
@@ -88,9 +229,10 @@ def load_sprite_sheet(filename, frame_count):
         return [dummy] * frame_count
 
 class Entity(pygame.sprite.Sprite):
-    def __init__(self, x, y, char_id, hp):
+    def __init__(self, x, y, char_id, hp, is_boss=False):
         super().__init__()
         self.char_id = char_id
+        self.is_boss = is_boss # 🌟 무조건 맨 위에 추가해야 에러가 안 납니다!
         self.state = "IDLE"
         self.timer = 0
         self.frame_index = 0
@@ -105,62 +247,115 @@ class Entity(pygame.sprite.Sprite):
         self.input_buffer = None
         self.buffer_timer = 0
         self.guard_effect_timer = 0 # 가드 이펙트 지속 시간
-        
+        self.guard_effect = PixelGuard() # 🌟 [추가] 이 줄을 추가하세요
+        self.recovery_timer = 0  # 🌟 [추가] 후딜레이 타이머
+        self.ghosts = []
+        self.is_cancel_dash = False
+        self.god_mode = False  # 🌟 [추가] 무적 모드 기본값은 꺼짐
+        self.is_guarding = False # 🌟 [추가] 가드 상태 변수
 
-        
         # 🌟 [추가] 체력 설정
         self.hp = hp
         self.max_hp = hp
         
         self.animations = {}
         data = CHAR_DATA.get(char_id, CHAR_DATA["A1"])
-        for state, (suffix, count) in data.items():
+        for state, (suffix, count, hit_idx) in data.items(): 
             path = os.path.join("dd\\assets", f"{self.char_id}_{suffix}.png")
-            self.animations[state] = load_sprite_sheet(path, count)
+            frames = load_sprite_sheet(path, count)
+            
+            # 🌟 [이미지 스왑 핵심] 보스일 경우 이미지를 붉은색으로 물들임!
+            if self.is_boss:
+                tinted_frames = []
+                for frame in frames:
+                    new_frame = frame.copy()
+                    # 원본 이미지에 (빨강 100%, 초록 30%, 파랑 30%) 필터를 덮어씌움 -> 검붉은 핏빛 기사 완성
+                    new_frame.fill((255, 80, 80, 255), special_flags=pygame.BLEND_RGBA_MULT)
+                    tinted_frames.append(new_frame)
+                self.animations[state] = tinted_frames
+            else:
+                self.animations[state] = frames
 
         self.image = self.animations["IDLE"][0]
         self.rect = self.image.get_rect(bottomleft=(x, y))
         self.hitbox = pygame.Rect(0, 0, 0, 0)
         self.is_attacking = False
         self.has_hit = False # 🌟 [추가] 이번 공격에 이미 히트했는지 여부
+        self.combo_step = 0
+        self.combo_timer = 0 # 🌟 프레임 단위 콤보 유지시간 타이머 (60 = 1초)
+        self.cancel_ui_timer = 0 # 🌟 [추가] 캔슬 대쉬 UI 표시 타이머
+        self.is_blocking = False # 🌟 [추가] 방금 맞은 공격을 가드했는가?
+        self.used_cancel_in_combo = False # 🌟 [추가] 이번 콤보에서 캔슬 대쉬를 썼는가? (무한 대쉬 방지)
 
-    def take_damage(self, amount, attacker):
-        if self.state == "DEATH": 
-            return False
-    
-    # 🌟 가드 판정 일반화 (플레이어인 경우에만 키 입력 체크)
-        is_guarding = False
-        if self.char_id == "A1": # 플레이어
-            keys = pygame.key.get_pressed()
-            if (self.facing_right and keys[pygame.K_a]) or (not self.facing_right and keys[pygame.K_d]):
-                is_guarding = True
-    
-        if is_guarding:
-            final_damage = amount * 0.5
-            knockback_power = 15 # 가드 시 살짝 밀림
-            self.guard_effect_timer = 10 # 가드 이펙트 출력 시간
-            print("🛡️ 가드 성공!")
+        if char_id == "A1":
+            self.hurtbox_w, self.hurtbox_h = 60, 100 # 플레이어는 세로로 긴 형태
+        elif char_id == "B1":
+            self.hurtbox_w, self.hurtbox_h = 70, 40  # 적(B1)은 낮고 뭉툭한 형태
         else:
-            final_damage = amount
-            knockback_power = 20 # 🌟 [강화] 넉백 파워 대폭 증가
-            print("💥 정타!")
+            self.hurtbox_w, self.hurtbox_h = 60, 80
+            
+        self.hurtbox = pygame.Rect(0, 0, 0, 0) # 실제 좌표가 담길 박스
 
-        self.hp -= final_damage
+    def take_damage(self, amount, attacker, attack_type): # attack_type 인자 추가
+        if self.state == "DEATH": return False
+
+        self.combo_step = 0
+        self.combo_timer = 0
+        self.used_cancel_in_combo = False
+
+        amount *= 0.5
+
+        is_guarding = self.is_guarding 
+
+        if attack_type == "LIGHT":
+            base_stun = 7 if is_guarding else 12
+            base_recovery = 12 if is_guarding else 10
+        else: 
+            base_stun = 10 if is_guarding else 20
+            base_recovery = 20 if is_guarding else 15
+
+        combo_count = attacker.combo_step if hasattr(attacker, 'combo_step') else 1
+        scale = COMBO_SCALING.get(combo_count, MIN_SCALING) 
+        current_scale = scale if not is_guarding else 1.0
+        
+        final_damage = amount * current_scale
+        final_stun = base_stun * current_scale 
+
+        if is_guarding:
+            final_damage *= 0.5 
+            base_knockback = KNOCKBACK_GUARD 
+            self.guard_effect_timer = 10
+            self.is_blocking = True # 🌟 [가드 성공 기록]
+        else:
+            base_knockback = KNOCKBACK_HIT
+            self.is_blocking = False # 🌟 [클린 히트 기록]
+
+        final_knockback = base_knockback
+
+        if not self.god_mode:
+            self.hp -= final_damage
+        else:
+            print(f"✨ {self.char_id} is INVINCIBLE!") 
+    
+        self.hit_stun_timer = final_stun 
+        self.state = "HIT"
+        self.timer = 0 # 🌟 [추가] 피격 애니메이션이 첫 프레임부터 시작하도록 초기화
+        self.is_attacking = False
+        attacker.recovery_frames = base_recovery
+    
+        self.hit_stun_timer = final_stun 
+        self.state = "HIT"
+        attacker.recovery_frames = base_recovery 
     
         if self.hp <= 0:
             self.hp = 0
-            self.state = "DEATH"
-            self.is_attacking = False
-            self.vel_x = 0
+            # 🌟 [버그 수정] 사망 진입 시 타이머 초기화
+            if self.state != "DEATH":
+                self.state = "DEATH"
+                self.timer = 0
         else:
-            self.state = "HIT"
-            self.timer = 0
-            self.is_attacking = False
-        # 🌟 [추가] 피격 경직 시간 설정 (넉백이 유지되는 시간)
-            self.hit_stun_timer = 15 if not is_guarding else 5 
-        # 넉백 방향 설정
-            self.vel_x = -knockback_power if self.facing_right else knockback_power
-            
+            self.vel_x = -final_knockback if self.facing_right else final_knockback
+        
         return True
 
     def add_to_buffer(self, action):
@@ -172,49 +367,90 @@ class Entity(pygame.sprite.Sprite):
             action = self.input_buffer
             self.input_buffer = None
             self.buffer_timer = 0
-            if action == "LIGHT" and self.is_grounded: self.handle_attack("LIGHT")
-            elif action == "HEAVY" and self.is_grounded: self.handle_attack("HEAVY")
-            elif action == "JUMP" and self.is_grounded: self.vel_y = JUMP_FORCE
+            # 🌟 [핵심 픽스] IDLE이나 RUN 상태일 때만 공격이 나감! (후딜레이 무시 불가)
+            if self.state in ["IDLE", "RUN"]:
+                if action == "LIGHT" and self.is_grounded: self.handle_attack("LIGHT")
+                elif action == "HEAVY" and self.is_grounded: self.handle_attack("HEAVY")
+                elif action == "JUMP" and self.is_grounded: self.vel_y = JUMP_FORCE
 
     def trigger_dash(self, is_forward):
         # 🌟 [수정] 대쉬 구분 로직
         if self.dash_cooldown_timer <= 0:
-            # 1. 공격 중 대쉬 (캔슬 대쉬) -> 게이지 소모
             if self.is_attacking:
                 if self.dash_charges > 0:
-                    print("✨ 대쉬 캔슬!")
+                    print("✨ 콤보 캔슬 대쉬! 콤보 유지시간 확장!")
                     self.dash_charges -= 1
+                    self.is_cancel_dash = True 
+                    self.combo_timer = 120
+                    self.cancel_ui_timer = 30 
+                    self.used_cancel_in_combo = True # 🌟 [추가] 이번 콤보에선 게이지 획득 불가!
                 else:
-                    print("❌ 게이지 부족!")
                     return False
+
+            else:
+                self.is_cancel_dash = False # 🌟 그냥 대쉬로 설정
             
+            self.hitbox = pygame.Rect(0, 0, 0, 0) 
+
             self.state = "DASH"
             self.is_attacking = False
+            self.hit_gauge = 0 
             self.timer = 0
             self.dash_timer = DASH_DURATION
             self.dash_cooldown_timer = DASH_COOLDOWN
             
             # 🌟 [백대쉬 로직] 전진이면 바라보는 방향으로, 후진이면 반대 방향으로 속도 설정
+            current_dash_speed = DASH_SPEED if is_forward else BACK_DASH_SPEED
             if is_forward:
-                self.vel_x = DASH_SPEED if self.facing_right else -DASH_SPEED
+                self.vel_x = current_dash_speed if self.facing_right else -current_dash_speed
             else:
-                self.vel_x = -DASH_SPEED if self.facing_right else DASH_SPEED
+                self.vel_x = -current_dash_speed if self.facing_right else current_dash_speed
             
             return True
         return False
 
     def handle_attack(self, attack_type):
-        if self.state in ["IDLE", "RUN"]:
-            if attack_type == "LIGHT":
-                self.state = "ATK1"
-                self.timer = 0
-                self.is_attacking = True
-                self.has_hit = False # 🌟 [추가] 공격 시작 시 히트 플래그 초기화
-            elif attack_type == "HEAVY":
-                self.state = "ATK2"
-                self.timer = 0
-                self.is_attacking = True
-                self.has_hit = False # 🌟 [추가] 강공격 시에도 히트 플래그 초기화 필수!
+        if not self.is_grounded: return False
+
+        # 🌟 [추가] 캐릭터별 공격 애니메이션 매핑 분기
+        target_state = "ATK1" # 기본값
+        
+        if self.char_id == "A2":
+            # A2: ATK1(강), ATK2(약)
+            target_state = "ATK2" if attack_type == "LIGHT" else "ATK1"
+        elif self.char_id == "C1":
+            # C1: ATK1(약), ATK3(강)
+            target_state = "ATK1" if attack_type == "LIGHT" else "ATK3"
+        else: # A1, B1 등 기본형
+            target_state = "ATK1" if attack_type == "LIGHT" else "ATK2"
+
+        # 해당 애니메이션이 실제로 존재하는지 체크 (예외 방지)
+        if target_state in self.animations:
+            self.state = target_state
+        else:
+            self.state = "ATK1" # 없으면 기본 공격형으로 후퇴
+
+        # 🌟 [중요] 현재 공격이 '약'인지 '강'인지 별도로 저장 (애니메이션 이름과 무관하게 프레임 데이터 적용)
+        self.current_atk_type = attack_type 
+        
+        self.timer = 0
+        self.is_attacking = True
+        self.has_hit = False
+        self.recovery_timer = 0
+        self.hitbox = pygame.Rect(0, 0, 0, 0)
+        return True
+
+    def register_hit(self):
+        """타격 성공 시 콤보 스텝을 올리고 시간을 갱신"""
+        if self.combo_timer > 0 or self.combo_step == 0: 
+            self.combo_step += 1 
+        else:
+            self.combo_step = 1 
+            self.used_cancel_in_combo = False 
+        
+        # 🌟 타격 성공 시 콤보 유지시간을 35프레임(약 0.6초)으로 설정!
+        self.combo_timer = 35 
+        return self.combo_step
 
     def apply_physics(self):
         self.vel_y += GRAVITY
@@ -241,18 +477,28 @@ class Entity(pygame.sprite.Sprite):
         self.rect.x += self.vel_x
 
         # 벽 충돌 처리
-        if self.rect.left < WALL_MARGIN:
-            self.rect.left = WALL_MARGIN
-            self.vel_x = 0
-        elif self.rect.right > SCREEN_WIDTH - WALL_MARGIN:
-            self.rect.right = SCREEN_WIDTH - WALL_MARGIN
-            self.vel_x = 0
+        
+
+        
 
     def update(self):
         self.apply_physics()
-        if self.buffer_timer > 0: self.buffer_timer -= 1
-        else: self.input_buffer = None
+        
+        if self.combo_timer > 0:
+            self.combo_timer -= 1
+            if self.combo_timer <= 0:
+                self.combo_step = 0 # 시간이 다 지나면 콤보 초기화
+                self.used_cancel_in_combo = False
+
+        # 🌟 [선입력(버퍼) 자동 캔슬 시스템]
+        if self.buffer_timer > 0:
+            self.buffer_timer -= 1
+        else:
+            self.input_buffer = None
+            
         if self.dash_cooldown_timer > 0: self.dash_cooldown_timer -= 1
+
+
         if hasattr(self, 'guard_effect_timer') and self.guard_effect_timer > 0:
                 self.guard_effect_timer -= 1
 
@@ -274,8 +520,9 @@ class Entity(pygame.sprite.Sprite):
                 self.execute_buffer()
 
         elif self.is_attacking:
-            # 공격 유형 결정 (ATK1 -> LIGHT, ATK2 -> HEAVY)
-            atk_type = "LIGHT" if self.state == "ATK1" else "HEAVY"
+            # 🌟 [수정] 애니메이션 이름이 아니라, 실제 발동한 공격 타입(약/강)을 기준으로 프레임 결정
+            atk_type = getattr(self, 'current_atk_type', "LIGHT")
+            
             total_frames = LIGHT_ATK_TOTAL_FRAMES if atk_type == "LIGHT" else HEAVY_ATK_TOTAL_FRAMES
             cfg = HITBOX_CONFIG[atk_type]
             
@@ -285,108 +532,286 @@ class Entity(pygame.sprite.Sprite):
             if self.frame_index >= len(frames): self.frame_index = len(frames) - 1
             self.image = frames[self.frame_index]
 
-            # 🌟 [통일된 히트박스 계산]
-            if cfg["start"] <= self.timer <= cfg["end"]:
-                offset = cfg["offset"] * SCALE_FACTOR 
-                w = cfg["w"] * SCALE_FACTOR
-                h = cfg["h"] * SCALE_FACTOR
-    
-    # 🌟 [핵심 수정] 상단 기준(rect.y) -> 하단 기준(rect.bottom)으로 변경
-    # 바닥 좌표에서 (y_off * SCALE)만큼 뺀 뒤, 박스 높이(h)만큼 더 빼줘야 
-    # 박스의 하단이 아닌 상단 좌표가 정확히 잡힙니다.
-                hy = self.rect.bottom - (cfg["y_off"] * SCALE_FACTOR) - h
-                
-                # 2. X축 계산: 중심점(centerx) 기준 (이미지 너비가 달라도 동일한 사거리 생성)
-                if self.facing_right:
-                    hx = self.rect.centerx + offset
+            # 🌟 [자동 계산 판정 시스템] 🌟
+            state_info = CHAR_DATA[self.char_id].get(self.state)
+            if state_info:
+                # state_info = ("Attack1", 4, 3) -> (이름, 장수, 히트이미지번호)
+                sprite_count = state_info[1]
+                hit_sprite_idx = state_info[2]
+
+                if hit_sprite_idx is not None:
+                    # 1. 이미지 한 장당 할당된 프레임 길이 계산
+                    frame_duration = total_frames / sprite_count
+                    # 2. 해당 이미지 번호의 시작 프레임과 종료 프레임 자동 계산
+                    start_f = hit_sprite_idx * frame_duration
+                    end_f = (hit_sprite_idx + 1) * frame_duration
+
+                    # 3. 현재 타이머가 그 계산된 구간 안에 있는지 확인
+                    if start_f <= self.timer <= end_f:
+                        offset = cfg["offset"] * SCALE_FACTOR 
+                        w = cfg["w"] * SCALE_FACTOR
+                        h = cfg["h"] * SCALE_FACTOR
+                        hy = self.rect.bottom - (cfg["y_off"] * SCALE_FACTOR) - h
+                        if self.facing_right: hx = self.rect.centerx + offset
+                        else: hx = self.rect.centerx - offset - w
+                        self.hitbox = pygame.Rect(hx, hy, w, h)
+                    else:
+                        self.hitbox = pygame.Rect(0, 0, 0, 0)
                 else:
-                    hx = self.rect.centerx - offset - w
-                
-                self.hitbox = pygame.Rect(hx, hy, w, h)
-            else:
-                self.hitbox = pygame.Rect(0, 0, 0, 0)
+                    self.hitbox = pygame.Rect(0, 0, 0, 0)
 
             if self.timer >= total_frames:
-                self.state, self.timer, self.is_attacking = "IDLE", 0, False
+                # 기본 후딜레이 설정
+                base_rec = 15 if atk_type == "LIGHT" else 20 # 🌟 기본 후딜 상향
+                
+                # 콤보 누적 패널티 (체감 가능하게 유지)
+                if self.combo_step <= 2:
+                    fatigue_penalty = 0 
+                else:
+                    fatigue_penalty = (self.combo_step - 2) * (5 if atk_type == "LIGHT" else 8)
+                
+                if not self.has_hit:
+                    # 🌟 [핵심] 헛쳤을 때의 패널티를 극대화하여 '연타 스팸' 방지
+                    self.combo_step = 0 
+                    self.combo_timer = 0 # 🌟 헛치면 콤보 시간도 즉시 증발 (얄짤없음)
+                    whiff_penalty = 35 if atk_type == "LIGHT" else 50
+                    self.recovery_timer = base_rec + whiff_penalty 
+                    
+                    # 시각적 피드백: 헛쳤을 때 캐릭터를 살짝 검게 만들어 무방비 상태임을 표시 (선택 사항)
+                    print(f"⚠️ {self.char_id} WHIFF!!! TOTAL RECOVERY: {self.recovery_timer}f")
+                else:
+                    # 히트 성공 시: 기본 후딜 + 콤보 패널티
+                    base_val = getattr(self, 'recovery_frames', base_rec)
+                    self.recovery_timer = base_val + fatigue_penalty
+                    if hasattr(self, 'recovery_frames'): del self.recovery_frames
+
+                if self.recovery_timer > 0:
+                    self.state = "RECOVERY"
+                else:
+                    self.state = "IDLE"
+                
+                self.timer = 0
+                self.is_attacking = False
                 self.execute_buffer()
 
         elif self.state == "HIT":
         # 🌟 피격 애니메이션 처리
             frames = self.animations.get("HIT", self.animations["IDLE"])
-            self.frame_index = 0 # 피격 시 첫 프레임 고정 혹은 간단한 루프
+            self.timer += 1
+            
+            # 🌟 [핵심 변경] % 대신 min()을 사용하여 마지막 프레임에 도달하면 고정시킵니다.
+            # 애니메이션 속도를 조절하고 싶다면 5를 다른 숫자로 바꾸세요.
+            self.frame_index = min(len(frames) - 1, self.timer // 5)
+            
             self.image = frames[self.frame_index]
             self.hitbox = pygame.Rect(0, 0, 0, 0)
+
+
+        elif self.state == "RECOVERY":
+            self.recovery_timer -= 1
+            # 후딜레이 중에는 IDLE의 첫 프레임(굳은 모습) 출력
+            frames = self.animations["IDLE"]
+            self.image = frames[0]
+            self.hitbox = pygame.Rect(0, 0, 0, 0)
+            if self.recovery_timer <= 0:
+                self.state = "IDLE"
+                self.execute_buffer()
+        elif self.state == "DEATH":
+            frames = self.animations.get("DEATH", self.animations["IDLE"])
+            # 🌟 [버그 수정] 전역 시간이 아닌 고유 타이머로 프레임 계산 및 마지막 프레임 고정
+            self.timer += 1
+            self.frame_index = self.timer // 10 # 애니메이션 재생 속도
+            if self.frame_index >= len(frames):
+                self.frame_index = len(frames) - 1 # 마지막 프레임에서 멈춤
+            self.image = frames[self.frame_index]
+            self.hitbox = pygame.Rect(0, 0, 0, 0)
+            self.vel_x = 0 # 사망 시 정지
+            
+            
         
         else: 
             if not self.is_grounded:
-                self.state = "JUMP" if self.vel_y < 0 else "FALL"
+                # 🌟 [수정] 점프/낙하 애니메이션이 있는 캐릭터만 해당 상태 사용
+                if self.vel_y < 0 and "JUMP" in self.animations:
+                    self.state = "JUMP"
+                elif self.vel_y >= 0 and "FALL" in self.animations:
+                    self.state = "FALL"
+                else:
+                    # B1처럼 점프 애니메이션이 없으면 IDLE의 0번 프레임으로 대체
+                    self.state = "IDLE" 
             elif abs(self.vel_x) > 0.1:
                 self.state = "RUN"
             else:
                 self.state = "IDLE"
+
             frames = self.animations.get(self.state, self.animations["IDLE"])
-            if self.state == "RUN": self.frame_index = (pygame.time.get_ticks() // 100) % len(frames)
-            elif self.state == "IDLE": self.frame_index = (pygame.time.get_ticks() // 200) % len(frames)
-            else: self.frame_index = 0
+            # 공중 상태인데 애니메이션이 없는 경우(B1 등) 강제로 IDLE 첫 프레임 고정
+            if not self.is_grounded and self.state == "IDLE":
+                self.frame_index = 0
+            elif self.state == "RUN": 
+                self.frame_index = (pygame.time.get_ticks() // 100) % len(frames)
+            elif self.state == "IDLE": 
+                self.frame_index = (pygame.time.get_ticks() // 200) % len(frames)
+            # 점프/낙하 애니메이션 재생 (마지막 프레임 고정)
+            elif self.state in ["JUMP", "FALL"]:
+                self.frame_index = min(len(frames) - 1, int(abs(self.vel_y) // 5))
+            else:
+                self.frame_index = 0
+                
             self.image = frames[self.frame_index]
-            self.hitbox = pygame.Rect(0, 0, 0, 0)
+
 
         if not self.facing_right:
             self.image = pygame.transform.flip(self.image, True, False)
+        
+        self.hurtbox = pygame.Rect(
+            self.rect.centerx - self.hurtbox_w // 2, 
+            self.rect.bottom - self.hurtbox_h, 
+            self.hurtbox_w, 
+            self.hurtbox_h
+        )
+
+        if self.state == "DASH" or self.state == "HIT" or self.is_attacking:
+            if pygame.time.get_ticks() % 6 == 0:
+                ghost_img = self.image.copy()
+                ghost_img.fill((150, 200, 255, 255), special_flags=pygame.BLEND_RGBA_MULT) 
+                self.ghosts.append([ghost_img, self.rect.copy(), 100])
+
+        for g in self.ghosts[:]:
+            g[2] -= 25
+            if g[2] <= 0:
+                self.ghosts.remove(g)
 
 class Enemy(Entity):
-    def __init__(self, x, y, char_id, hp):
-        super().__init__(x, y, char_id, hp)
+    def __init__(self, x, y, char_id, hp, is_boss=False): # 🌟 인자 추가
+        super().__init__(x, y, char_id, hp, is_boss)
         self.ai_timer = 0
-        self.ai_state = "APPROACH" # APPROACH, ATTACK, WAIT
+        self.ai_state = "IDLE"
+        self.decision_timer = 0
+        self.is_boss = is_boss # 🌟 보스 여부 저장
 
     def update_ai(self, target):
-        # 사망했거나 피격 중일 때는 AI 로직을 완전히 중단하여 애니메이션이 씹히지 않게 함
-        if self.state == "DEATH" or self.state == "HIT": 
+    # 후딜레이(RECOVERY) 상태일 때도 AI가 아무 행동(점프, 이동, 가드)을 못 하게 막음
+        if self.state in ["DEATH", "HIT", "RECOVERY"]:
+            return 
+        
+        is_boss = getattr(self, 'is_boss', False)
+        cfg_id = "BOSS" if is_boss else self.char_id
+        cfg = AI_BRAIN_CONFIG.get(cfg_id, AI_BRAIN_CONFIG["B1"]) 
+
+        if not self.is_grounded:
             return
 
-        # 플레이어와의 거리 계산
         dist = target.rect.centerx - self.rect.centerx
-        
-        # 1. 방향 설정 (덜덜거림 방지)
-        if abs(dist) > 20: 
-            self.facing_right = dist > 0
+        abs_dist = abs(dist)
+        self.facing_right = dist > 0
 
-        # 🌟 [핵심] 공격 중일 때는 AI가 상태(IDLE/RUN)를 강제로 바꾸지 못하게 함
+        # 🌟 철벽 가드 시스템 (관성 유지)
+        if self.is_guarding:
+            if not target.is_attacking:
+                self.is_guarding = False 
+            else:
+                return # 🌟 강제로 멈추지 않고(vel_x=0 삭제) 마찰력에 맡김
+
+        # AI 상태 및 사거리 계산
+        is_target_vulnerable = (target.state == "RECOVERY")
+        is_target_whiffing = (target.is_attacking and not target.has_hit)
+        
+        can_heavy = "ATK2" in self.animations
+        planned_atk = "LIGHT" if (not can_heavy or random.random() < 0.7) else "HEAVY"
+        atk_cfg = HITBOX_CONFIG[planned_atk] 
+        attack_reach = (atk_cfg["offset"] + atk_cfg["w"]) * SCALE_FACTOR + (target.hurtbox_w // 2)
+        self.debug_reach = attack_reach 
+
         if self.is_attacking:
-            self.vel_x = 0 # 공격 중에는 정지
+            # 콤보 캔슬 압박
+            if self.has_hit and self.dash_charges > 0 and random.random() < 0.7: 
+                state_info = CHAR_DATA[self.char_id].get(self.state)
+                if state_info and state_info[2] is not None:
+                    hit_end_f = (state_info[2] + 1) * (18/state_info[1]) 
+                    if self.timer > hit_end_f:
+                        self.trigger_dash(is_forward=True)
+                        self.decision_timer = 0 
+            return # 🌟 공격 중에도 vel_x=0으로 멈추지 않고 타격 관성 유지
+
+        if self.state == "DASH":
+            return
+
+        # ====================================================================
+        # 🛡️ [우선순위 1] 방어 및 회피 (상대가 공격 중일 때)
+        # ====================================================================
+        if target.is_attacking and abs_dist < attack_reach * 1.5:
+            if self.decision_timer <= 0:
+                # 🌟 뒤잡기 점프: 게이지 검사(dash_charges > 0) 삭제! 
+                if target.state == "ATK1" and random.random() < cfg["back_catch_prob"]: 
+                    self.vel_y = JUMP_FORCE 
+                    self.state = "DASH" 
+                    self.dash_timer = 20 
+                    self.vel_x = (DASH_SPEED * 1.3) if self.facing_right else (-DASH_SPEED * 1.3)
+                    self.decision_timer = 30 
+                    print("🤖 AI: 완벽한 뒤잡기 점프!")
+                    return
+                
+                if random.random() < cfg["guard_prob"]: 
+                    self.is_guarding = True 
+                    self.decision_timer = 10
+                    return
+                
+                # 🌟 백대쉬 회피: 게이지 검사 삭제!
+                if random.random() < cfg["dash_back_prob"]: 
+                    self.trigger_dash(is_forward=False)
+                    self.decision_timer = 15
+                    return
+                
+                self.decision_timer = 10 
             return 
 
-        # 2. AI 상태 머신
-        if self.ai_state == "APPROACH":
-            # 사거리 밖이면 접근
-            if abs(dist) > 200: 
-                self.vel_x = WALK_SPEED if dist > 0 else -WALK_SPEED
-                self.state = "RUN" # 공격 중이 아닐 때만 RUN 설정
+        # ====================================================================
+        # ⚔️ [우선순위 2] 딜캐 (상대가 헛치거나 후딜레이 중일 때)
+        # ====================================================================
+        if is_target_vulnerable or is_target_whiffing:
+            if abs_dist <= attack_reach:
+                self.handle_attack(planned_atk)
+                self.decision_timer = 5
+                return
+            # 🌟 대쉬 접근 딜캐: 게이지 검사 삭제! (대쉬 쿨타임만 맞으면 발동)
+            elif abs_dist <= attack_reach * 2.5:
+                self.trigger_dash(is_forward=True)
+                self.decision_timer = 0
+                return
+
+        # ====================================================================
+        # 🚶 [우선순위 3] 뉴트럴 상태에서의 거리 조절
+        # ====================================================================
+        if self.decision_timer > 0:
+            self.decision_timer -= 1
+            if self.state not in ["IDLE", "DASH", "HIT", "RECOVERY"] and self.is_grounded:
+                 self.vel_x = WALK_SPEED if dist > 0 else -WALK_SPEED
+            return
+
+        if abs_dist > attack_reach * 2.5: 
+            # 🌟 일반 대쉬 접근: 게이지 검사 삭제!
+            if random.random() < cfg["aggressive_dash"]: 
+                self.trigger_dash(is_forward=True)
+                self.decision_timer = 15
             else:
-                # 사거리 진입 -> 공격 상태로 전환
-                self.ai_state = "ATTACK"
-                self.ai_timer = 0
-        
-        elif self.ai_state == "ATTACK":
-            # 공격 실행 (Entity의 handle_attack 호출)
-            self.vel_x = 0
-            self.handle_attack("LIGHT")
-            
-            # 공격을 시작했으므로 즉시 WAIT 상태로 전환하여 
-            # 다음 프레임에 다시 handle_attack이 호출되는 것을 방지
-            self.ai_state = "WAIT"
-            self.ai_timer = 45 # 공격 후 대기 시간 (약 0.75초)
-        
-        elif self.ai_state == "WAIT":
-            self.vel_x = 0
-            self.state = "IDLE" # 대기 중에는 IDLE 애니메이션
-            self.ai_timer -= 1
-            if self.ai_timer <= 0:
-                self.ai_state = "APPROACH"
+                self.vel_x = WALK_SPEED if dist > 0 else -WALK_SPEED
+                self.decision_timer = 10 
+
+        elif abs_dist > attack_reach: 
+            if random.random() < cfg["jump_in_prob"] and self.is_grounded: 
+                self.vel_y = JUMP_FORCE
+                self.vel_x = WALK_SPEED if dist > 0 else -WALK_SPEED
+                self.decision_timer = 20
+            else:
+                self.vel_x = WALK_SPEED if dist > 0 else -WALK_SPEED
+                self.decision_timer = 5 
+
+        else: 
+            self.handle_attack(planned_atk)
+            self.decision_timer = 20
 
     def update(self):
-        # Entity의 기본 update(물리, 애니메이션 처리)를 호출
         super().update()
 
 def main():
@@ -395,117 +820,319 @@ def main():
     pygame.display.set_caption("The Last Stand")
     clock = pygame.time.Clock()
     
+    font_small = pygame.font.SysFont("arial", 20, bold=True)
+    font_large = pygame.font.SysFont("arial", 40, bold=True)
+    font_huge = pygame.font.SysFont("impact", 120, italic=True) # 🌟 [추가] 카운트다운용 거대 폰트
+
+    current_stage_idx = 0
+    stage_info = STAGE_SEQUENCE[current_stage_idx]
+    countdown_timer = 240
+
     player = Entity(200, GROUND_Y, "A1", PLAYER_MAX_HP)
-    enemy = Enemy(1000, GROUND_Y, "B1", ENEMY_MAX_HP)
+    # 🌟 is_boss 정보를 생성할 때 넘겨줌
+    enemy = Enemy(1000, GROUND_Y, stage_info["id"], stage_info["hp"], stage_info.get("boss", False))
+    
+    # 🌟 [대칭 적용 1] P1과 P2(AI) 각각의 콤보 디스플레이 생성
+    p1_combo_display = ComboDisplay() 
+    p2_combo_display = ComboDisplay()
+    
+    combo_display = ComboDisplay() # 🌟 [추가] 콤보 디스플레이 생성
     
     all_sprites = pygame.sprite.Group(player, enemy)
     hitstop_timer = 0
+
+    screen_shake_timer = 0
+    screen_shake_intensity = 0
 
     last_key_pressed = None
     last_key_time = 0
 
     running = True
     while running:
-        if hitstop_timer > 0:
-            hitstop_timer -= 1
-        else:
-            keys = pygame.key.get_pressed()
-            if player.state != "DASH":
-        # 🌟 [수정] HIT 상태일 때는 이동 입력을 완전히 무시 (넉백 유지)
-                if not player.is_attacking and player.state != "HIT": 
-                    if keys[pygame.K_a]:
-                        player.vel_x = -BACK_WALK_SPEED if player.facing_right else -WALK_SPEED
-                    elif keys[pygame.K_d]:
-                        player.vel_x = WALK_SPEED if player.facing_right else BACK_WALK_SPEED
-                    else:
-                        player.vel_x = 0
-                elif player.state == "HIT":
-                    pass # 넉백 속도가 apply_physics에서 처리됨
-                else:
-                    player.vel_x = 0
-            # 대쉬 중일 때는 대쉬 속도가 적용되고, 
-            # HIT 상태(가드 포함)일 때는 속도를 0으로 만들어 멈추게 함
+        keys = pygame.key.get_pressed()
+        
+        if countdown_timer > 0:
+            countdown_timer -= 1 # 🌟 [추가] 카운트다운 줄이기
 
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT: running = False
-                if event.type == pygame.KEYDOWN:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT: running = False
+            if event.type == pygame.KEYDOWN:
+                # F1, F2는 시스템 단축키라 언제든 작동
+                if event.key == pygame.K_F1: player.god_mode = not player.god_mode
+                if event.key == pygame.K_F2: enemy.god_mode = not enemy.god_mode
+
+                # 🌟 [추가] 카운트다운이 끝난 상태에서만 플레이어 조작 가능
+                if countdown_timer <= 0:
                     current_time = pygame.time.get_ticks()
                     if event.key in [pygame.K_a, pygame.K_d]:
                         if event.key == last_key_pressed and (current_time - last_key_time) < DOUBLE_TAP_TIME:
                             is_forward = False
-                            if (event.key == pygame.K_d and player.facing_right) or \
-                                (event.key == pygame.K_a and not player.facing_right):
+                            if (event.key == pygame.K_d and player.facing_right) or (event.key == pygame.K_a and not player.facing_right):
                                 is_forward = True
-                        
                             player.trigger_dash(is_forward)
                         last_key_pressed, last_key_time = event.key, current_time
-                    if event.key == pygame.K_w and player.is_grounded: player.vel_y = JUMP_FORCE
+                    
+                    if event.key == pygame.K_w and player.is_grounded: 
+                        if not player.is_attacking and player.state not in ["HIT", "RECOVERY", "DASH"]:
+                            player.vel_y = JUMP_FORCE
+                    
                     if event.key == pygame.K_i:
-                        if player.is_grounded and player.state not in ["DASH"]: player.handle_attack("LIGHT")
+                        if player.is_grounded and (player.state in ["IDLE", "RUN"] or player.is_cancel_dash): player.handle_attack("LIGHT")
                         else: player.add_to_buffer("LIGHT")
-                    if event.key == pygame.K_o:
-                        if player.is_grounded and player.state not in ["DASH"]: player.handle_attack("HEAVY")
-                        else: player.add_to_buffer("HEAVY")
-            
-            player.facing_right = (enemy.rect.centerx > player.rect.centerx)
-            # 적 또한 항상 플레이어를 바라봅니다.
-            enemy.facing_right = (player.rect.centerx > enemy.rect.centerx)
 
-            enemy.update_ai(player)
+                    if event.key == pygame.K_o:
+                        if player.is_grounded and (player.state in ["IDLE", "RUN"] or player.is_cancel_dash): player.handle_attack("HEAVY")
+                        else: player.add_to_buffer("HEAVY")
+
+        if hitstop_timer > 0:
+            hitstop_timer -= 1
+        else:
+            player.is_guarding = False
+            
+            # 🌟 [추가] 카운트다운이 끝났을 때만 이동 및 AI 작동
+            if countdown_timer <= 0:
+                if player.is_grounded and not player.is_attacking and player.state not in ["HIT", "RECOVERY", "DASH"]:
+                    if (player.facing_right and keys[pygame.K_a]) or (not player.facing_right and keys[pygame.K_d]):
+                        player.is_guarding = True
+
+                if player.state != "DASH":
+                    if not player.is_attacking and player.state not in ["HIT", "RECOVERY"]: 
+                        if keys[pygame.K_a]: player.vel_x = -BACK_WALK_SPEED if player.facing_right else -WALK_SPEED
+                        elif keys[pygame.K_d]: player.vel_x = WALK_SPEED if player.facing_right else BACK_WALK_SPEED
+                        else: pass 
+                    elif player.state == "HIT": pass 
+                    elif player.state == "RECOVERY": pass
+                    else: pass
+                
+                enemy.update_ai(player) # 🌟 AI도 여기서 작동 (카운트다운 땐 멍때림)
+
+            # 바라보는 방향 업데이트 (카운트다운 중에도 상대를 쳐다보긴 함)
+            if player.state in ["IDLE", "RUN"]:
+                player.facing_right = (enemy.rect.centerx > player.rect.centerx)
+            if enemy.state in ["IDLE", "RUN"]:
+                enemy.facing_right = (player.rect.centerx > enemy.rect.centerx)
+            
+            if player.state == "DASH" and player.is_cancel_dash:
+                if enemy.state == "HIT" and not enemy.is_blocking:
+                    enemy.hit_stun_timer += DASH_CANCEL_STUN_BONUS
+                player.is_cancel_dash = False 
+
+            if enemy.state == "DASH" and enemy.is_cancel_dash:
+                if player.state == "HIT" and not player.is_blocking:
+                    player.hit_stun_timer += DASH_CANCEL_STUN_BONUS
+                    print(f"⚠️ DANGER! AI가 캔슬 대쉬로 플레이어를 굳혔습니다!")
+                enemy.is_cancel_dash = False 
+
+            p1_combo_display.update()
+            p2_combo_display.update()
+            combo_display.update()
             all_sprites.update()
 
-            # 🌟 [충돌 판정 로직]
+            if enemy.state == "DEATH" and enemy.frame_index == len(enemy.animations["DEATH"]) - 1:
+    # 2초(120프레임) 정도 대기 후 다음 스테이지로 전환하는 타이머를 써도 좋지만, 
+    # 일단 즉시 전환 로직입니다.
+                if current_stage_idx < len(STAGE_SEQUENCE) - 1:
+                    current_stage_idx += 1
+                    next_stage = STAGE_SEQUENCE[current_stage_idx]
+        
+                    enemy.kill() 
+                    # 🌟 Enemy를 생성하는 순간에 next_stage의 "boss" 여부를 바로 넘겨줌 (이때 이미지가 붉은색으로 바뀜!)
+                    enemy = Enemy(1100, GROUND_Y, next_stage["id"], next_stage["hp"], next_stage.get("boss", False))
+                    all_sprites.add(enemy)
+        
+        # 플레이어 위치 초기화 및 약간의 체력 회복 (기획적 허용)
+                    player.rect.left = 200
+                    player.hp = min(player.max_hp, player.hp + 20)
+                    countdown_timer = 240 # 🌟 [추가] 다음 라운드 시작 시 다시 카운트다운!
+                    print(f"NEXT STAGE: {next_stage['name']}")
+                else:
+                    print("ALL STAGES CLEARED!") # 게임 엔딩 처리
+
+            target_cam_x = (player.rect.centerx + enemy.rect.centerx) / 2 - SCREEN_WIDTH // 2
+            global CAMERA_X 
+            CAMERA_X += (target_cam_x - CAMERA_X) * 0.1
+
+            dist = player.rect.centerx - enemy.rect.centerx
+            if abs(dist) > VIRTUAL_WALL_DIST:
+    # 거리가 벌어지려고 할 때, 멀어지는 방향의 속도를 차단
+                if dist > 0: # 플레이어가 오른쪽
+                    if player.vel_x > 0: player.vel_x = 0 # 플레이어 전진 차단
+                    if enemy.vel_x < 0: enemy.vel_x = 0   # 적 후진 차단
+                    player.rect.centerx = enemy.rect.centerx + VIRTUAL_WALL_DIST # 위치 고정
+                else: # 플레이어가 왼쪽
+                    if player.vel_x < 0: player.vel_x = 0 # 플레이어 후진 차단
+                    if enemy.vel_x > 0: enemy.vel_x = 0   # 적 전진 차단
+                    player.rect.centerx = enemy.rect.centerx - VIRTUAL_WALL_DIST # 위치 고정
+
             # 1. 플레이어 -> 적 공격
-            if player.hitbox.colliderect(enemy.rect):
+            if player.hitbox.colliderect(enemy.hurtbox):
                 if not player.has_hit: 
-                    if enemy.take_damage(10, player):
-            # 🌟 [추가] 공격 성공 시 히트 게이지 상승
-                        player.hit_gauge += 1
-                        if player.hit_gauge >= 3:
-                            player.hit_gauge = 0
-                            player.dash_charges += 1 # 3번 때리면 대쉬 1회 충전
+                    atk_type = "LIGHT" if player.state == "ATK1" else "HEAVY"
+                    combo_count = player.register_hit() 
+                    p1_combo_display.trigger(combo_count) 
+
+                    screen_shake_timer = 10 
+                    screen_shake_intensity = 8 if atk_type == "HEAVY" else 4 
+
+                    if enemy.take_damage(10, player, atk_type): 
+                        # 🌟 [무한 콤보 픽스] 이번 콤보에서 캔슬 대쉬를 안 썼을 때만 게이지 상승!
+                        if not player.used_cancel_in_combo:
+                            player.hit_gauge += 1
+                            if player.hit_gauge >= 3:
+                                player.hit_gauge = 0
+                                player.dash_charges = 1 
             
-                        hitstop_timer = HIT_STOP_DURATION
-                        player.has_hit = True
+                    hitstop_timer = HIT_STOP_LIGHT if atk_type == "LIGHT" else HIT_STOP_HEAVY
+                    player.has_hit = True
 
             # 2. 적 -> 플레이어 공격
-            if enemy.hitbox.colliderect(player.rect):
+            if enemy.hitbox.colliderect(player.hurtbox):
                 if not enemy.has_hit:
-                    if player.take_damage(15, enemy):
-                        hitstop_timer = HIT_STOP_DURATION
-                        enemy.has_hit = True # 🌟 히트 완료 표시!
-                    enemy.hitbox = pygame.Rect(0, 0, 0, 0)
+                    enemy_atk_type = "LIGHT" if enemy.state == "ATK1" else "HEAVY"
+                    
+                    combo_count = enemy.register_hit()
+                    p2_combo_display.trigger(combo_count) 
+
+                    if player.take_damage(10, enemy, enemy_atk_type): 
+                        hitstop_timer = HIT_STOP_LIGHT if enemy_atk_type == "LIGHT" else HIT_STOP_HEAVY
+                        enemy.has_hit = True
+                        
+                        # 🌟 [무한 콤보 픽스] AI도 무한 대쉬 콤보 불가!
+                        if not enemy.used_cancel_in_combo:
+                            enemy.hit_gauge += 1
+                            if enemy.hit_gauge >= 3:
+                                enemy.hit_gauge = 0
+                                enemy.dash_charges = 1
+                    
 
         # 그리기
         screen.fill((50, 50, 50))
-        pygame.draw.line(screen, (100, 100, 100), (0, GROUND_Y), (SCREEN_WIDTH, GROUND_Y), 2)
         
-        # 🌟 [UI: HP 바]
-        pygame.draw.rect(screen, (255, 0, 0), (50, 50, 300, 20))
-        pygame.draw.rect(screen, (0, 255, 0), (50, 50, 3 * player.hp, 20))
-        pygame.draw.rect(screen, (255, 0, 0), (930, 50, 300, 20))
-        pygame.draw.rect(screen, (0, 255, 0), (930, 50, 6 * enemy.hp, 20))
+        # 1. 월드 요소 그리기 (오프셋 및 카메라 적용)
+        offset_x, offset_y = 0, 0
+        if screen_shake_timer > 0:
+            offset_x = random.randint(-screen_shake_intensity, screen_shake_intensity)
+            offset_y = random.randint(-screen_shake_intensity, screen_shake_intensity)
+            screen_shake_timer -= 1
 
-        all_sprites.draw(screen)
+        for entity in all_sprites:
+            # 잔상
+            for img, rect, alpha in entity.ghosts:
+                img.set_alpha(alpha) 
+                screen.blit(img, (rect.x + offset_x - CAMERA_X, rect.y + offset_y))
+            # 본체
+            screen.blit(entity.image, (entity.rect.x + offset_x - CAMERA_X, entity.rect.y + offset_y))
+
+        # 바닥선
+        pygame.draw.line(screen, (100, 100, 100), (0 + offset_x - CAMERA_X, GROUND_Y + offset_y), (SCREEN_WIDTH + offset_x - CAMERA_X, GROUND_Y + offset_y), 2)
+
+        # 히트박스/허트박스 디버그 라인 (오프셋 적용)
+        if player.hitbox.width > 0: pygame.draw.rect(screen, (255, 0, 0), player.hitbox.move(offset_x - CAMERA_X, offset_y), 2)
+        if enemy.hitbox.width > 0: pygame.draw.rect(screen, (255, 0, 0), enemy.hitbox.move(offset_x - CAMERA_X, offset_y), 2)
+        pygame.draw.rect(screen, (0, 255, 0), player.hurtbox.move(offset_x - CAMERA_X, offset_y), 1)
+        pygame.draw.rect(screen, (0, 255, 0), enemy.hurtbox.move(offset_x - CAMERA_X, offset_y), 1)
+
+        # 🌟 [추가] AI의 공격 사거리(Attack Reach) 시각화 (노란색 선)
+        if hasattr(enemy, 'debug_reach'):
+            # 적이 바라보는 방향으로 사거리 끝 좌표 계산
+            reach_x = enemy.rect.centerx + (enemy.debug_reach if enemy.facing_right else -enemy.debug_reach)
+            
+            # 적 발밑에서부터 사거리 끝까지 노란색 선 그리기
+            start_pos = (enemy.rect.centerx + offset_x - CAMERA_X, enemy.rect.bottom + offset_y)
+            end_pos = (reach_x + offset_x - CAMERA_X, enemy.rect.bottom + offset_y)
+            pygame.draw.line(screen, (255, 255, 0), start_pos, end_pos, 4) # 두께 4의 노란선
+
+        # 가드 이펙트
         for entity in all_sprites:
             if hasattr(entity, 'guard_effect_timer') and entity.guard_effect_timer > 0:
-                effect_surf = pygame.Surface((200, 200), pygame.SRCALPHA)
-                color = (150, 220, 255, 180) 
-                cx, cy = 100, 100
-                pygame.draw.circle(effect_surf, color, (cx, cy), 60, 5) 
-                pygame.draw.circle(effect_surf, (150, 220, 255, 80), (cx, cy), 55) 
-                
-                if entity.facing_right:
-                    pos = (entity.rect.centerx + 20, entity.rect.centery - 50)
-                else:
-                    effect_surf = pygame.transform.flip(effect_surf, True, False)
-                    pos = (entity.rect.centerx - 120, entity.rect.centery - 50)
-                
-                screen.blit(effect_surf, pos)
+                facing_val = 1 if entity.facing_right else -1
+                y_val = 100 if entity.char_id == "A1" else 10
+                entity.guard_effect.draw(screen, entity.rect.centerx + offset_x - CAMERA_X, entity.rect.centery + offset_y, facing_val, y_val)
 
-        if player.hitbox.width > 0: pygame.draw.rect(screen, (255, 0, 0), player.hitbox, 2)
-        if enemy.hitbox.width > 0: pygame.draw.rect(screen, (255, 0, 0), enemy.hitbox, 2)
+        # 캔슬 대쉬 UI (캐릭터 머리 위)
+        for entity in all_sprites:
+            if hasattr(entity, 'cancel_ui_timer') and entity.cancel_ui_timer > 0:
+                entity.cancel_ui_timer -= 1
+                y_offset = 30 - entity.cancel_ui_timer
+                cancel_text = font_small.render("CANCEL!", True, (0, 255, 255))
+                screen.blit(cancel_text, (entity.rect.centerx - CAMERA_X - cancel_text.get_width()//2, entity.rect.top - 20 - y_offset))
+
+        # 콤보 디스플레이
+        p1_combo_rect = player.rect.copy()
+        p1_combo_rect.x -= CAMERA_X
+        p1_combo_display.draw(screen, p1_combo_rect)
+
+        p2_combo_rect = enemy.rect.copy()
+        p2_combo_rect.x -= CAMERA_X
+        p2_combo_display.draw(screen, p2_combo_rect)
+
+        # ========================================================
+        # 🌟 격투 게임 대칭형 HUD (Heads Up Display)
+        # ========================================================
         
+        # [중앙 VS 마크]
+        vs_text = font_large.render("VS", True, (255, 200, 0))
+        screen.blit(vs_text, (SCREEN_WIDTH//2 - vs_text.get_width()//2, 30))
+
+        # [Player 1 (왼쪽) UI]
+        p1_hp_ratio = player.hp / player.max_hp
+        p1_color = (0, 255, 0) if p1_hp_ratio > 0.5 else (255, 255, 0) if p1_hp_ratio > 0.2 else (255, 0, 0)
+        pygame.draw.rect(screen, (80, 0, 0), (50, 40, 450, 30)) # 배경
+        pygame.draw.rect(screen, p1_color, (50, 40, 450 * p1_hp_ratio, 30)) # HP
+        pygame.draw.rect(screen, (255, 255, 255), (50, 40, 450, 30), 3) # 테두리
+        
+        p1_name = font_small.render("PLAYER 1", True, (255, 255, 255))
+        screen.blit(p1_name, (50, 15))
+
+        # Player 1 게이지 (좌측 하단)
+        for i in range(3):
+            color = (0, 200, 255) if i < player.hit_gauge else (60, 60, 60)
+            pygame.draw.circle(screen, color, (60 + (i * 30), 680), 10)
+        p1_dash_text = font_small.render(f"DASH: {player.dash_charges}", True, (255, 255, 255))
+        screen.blit(p1_dash_text, (160, 670))
+
+        if countdown_timer > 0:
+            if countdown_timer > 180: text_str, color = "3", (255, 255, 255)
+            elif countdown_timer > 120: text_str, color = "2", (255, 255, 255)
+            elif countdown_timer > 60: text_str, color = "1", (255, 255, 255)
+            else: text_str, color = "FIGHT!", (255, 50, 50)
+            
+            # 심장 박동처럼 텍스트 크기가 울렁거리는(Pop) 효과
+            scale_anim = math.sin(((countdown_timer % 60) / 60) * 3.14) if countdown_timer > 60 else math.sin((countdown_timer / 60) * 3.14)
+            scale = 1.0 + (scale_anim * 0.3)
+            
+            cd_text = font_huge.render(text_str, True, color)
+            cd_shadow = font_huge.render(text_str, True, (0, 0, 0))
+            
+            w, h = cd_text.get_size()
+            scaled_w, scaled_h = int(w * scale), int(h * scale)
+            cd_text = pygame.transform.scale(cd_text, (scaled_w, scaled_h))
+            cd_shadow = pygame.transform.scale(cd_shadow, (scaled_w, scaled_h))
+            
+            # 정중앙 배치
+            screen.blit(cd_shadow, (SCREEN_WIDTH//2 - scaled_w//2 + 5, SCREEN_HEIGHT//2 - scaled_h//2 + 5))
+            screen.blit(cd_text, (SCREEN_WIDTH//2 - scaled_w//2, SCREEN_HEIGHT//2 - scaled_h//2))
+
+
+        # [Player 2 (오른쪽) UI] - 데미지를 입으면 가운데 쪽으로 줄어듦
+        p2_hp_ratio = enemy.hp / enemy.max_hp
+        p2_color = (0, 255, 0) if p2_hp_ratio > 0.5 else (255, 255, 0) if p2_hp_ratio > 0.2 else (255, 0, 0)
+        p2_bar_x = SCREEN_WIDTH - 50 - 450
+        pygame.draw.rect(screen, (80, 0, 0), (p2_bar_x, 40, 450, 30)) # 배경
+        # 🌟 격투게임식 역방향 HP바 (오른쪽 끝 고정, 가운데로 줄어듦)
+        pygame.draw.rect(screen, p2_color, (p2_bar_x + 450 * (1 - p2_hp_ratio), 40, 450 * p2_hp_ratio, 30)) 
+        pygame.draw.rect(screen, (255, 255, 255), (p2_bar_x, 40, 450, 30), 3) # 테두리
+        
+        p2_name = font_small.render("PLAYER 2 (AI)", True, (255, 255, 255))
+        screen.blit(p2_name, (SCREEN_WIDTH - 50 - p2_name.get_width(), 15))
+
+        # Player 2 게이지 (우측 하단, 대칭 배치)
+        for i in range(3):
+            color = (255, 50, 50) if i < enemy.hit_gauge else (60, 60, 60) # 적은 붉은색 게이지
+            pygame.draw.circle(screen, color, (SCREEN_WIDTH - 60 - (i * 30), 680), 10)
+        p2_dash_text = font_small.render(f"DASH: {enemy.dash_charges}", True, (255, 255, 255))
+        screen.blit(p2_dash_text, (SCREEN_WIDTH - 240, 670))
+
         pygame.display.flip()
         clock.tick(FPS)
 
