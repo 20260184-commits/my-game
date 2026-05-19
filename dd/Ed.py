@@ -33,7 +33,7 @@ STAGE_SEQUENCE = [
     {"id": "B1", "hp": 100,  "name": "SCOUT B1"},
     {"id": "A2", "hp": 100, "name": "KNIGHT A2"},
     {"id": "C1", "hp": 100,  "name": "ASSASSIN C1"},
-    {"id": "A2", "hp": 300, "name": "THE MASKED MASTER", "boss": True} # 보스는 A2로 시작하여 C1과 번갈아 변신
+    {"id": "A2", "hp": 100, "name": "THE MASKED MASTER", "boss": True} # 보스는 A2로 시작하여 C1과 번갈아 변신
 ]
 
 # 🌟 [추가] 전투 상수
@@ -122,6 +122,52 @@ AI_BRAIN_CONFIG = {
     }
 }
 
+
+class DeathExplosion:
+    def __init__(self, x, y):
+        self.shards = []
+        # 1. 사각형 파편들 생성
+        for _ in range(60):
+            self.shards.append({
+                "pos": [x, y],
+                "vel": [random.uniform(-15, 15), random.uniform(-15, 15)], # 사방으로 비산
+                "size": [random.randint(4, 12), random.randint(2, 4)], # 길쭉한 파편 형태
+                "color": random.choice([(255, 255, 255), (100, 0, 255), (50, 0, 100)]), # 보라/흰색 (보스 감성)
+                "life": random.randint(30, 60),
+                "angle": random.uniform(0, 360)
+            })
+        self.flash_alpha = 255 # 처음에 화면이 번쩍하게 함
+
+    def update(self):
+        for s in self.shards:
+            # 공기 저항으로 점점 느려지게 함
+            s["pos"][0] += s["vel"][0]
+            s["pos"][1] += s["vel"][1]
+            s["vel"][0] *= 0.94
+            s["vel"][1] *= 0.94
+            s["life"] -= 1
+            
+        # 🌟 이 줄의 s.shards를 self.shards로 수정합니다!
+        self.shards = [s for s in self.shards if s["life"] > 0]
+
+        if self.flash_alpha > 0:
+            self.flash_alpha -= 15 # 번쩍임은 빠르게 사라짐
+
+    def draw(self, surface, camera_x):
+        # 2. 화면 전체 번쩍임 (임팩트)
+        if self.flash_alpha > 0:
+            flash_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+            flash_surf.fill((255, 255, 255))
+            flash_surf.set_alpha(self.flash_alpha)
+            surface.blit(flash_surf, (0, 0))
+
+        # 3. 도트 파편 그리기
+        for s in self.shards:
+            shard_surf = pygame.Surface((s["size"][0], s["size"][1]))
+            shard_surf.fill(s["color"])
+            # 회전 연출 (선택사항, 성능을 위해 생략 가능)
+            # rotated_shard = pygame.transform.rotate(shard_surf, s["angle"])
+            surface.blit(shard_surf, (s["pos"][0] - camera_x, s["pos"][1]))
 
 class PixelGuard:
     def __init__(self):
@@ -312,12 +358,20 @@ class Entity(pygame.sprite.Sprite):
 
         is_guarding = self.is_guarding 
 
+        if self.is_boss:
+            # 강공격이 아니면 상태가 HIT으로 변하지 않고 체력만 깎임 (슈퍼 아머)
+            if attack_type == "LIGHT":
+                self.hp -= amount * 0.3 # 데미지도 훨씬 적게 받음
+                return True # 경직 없이 리턴
+            else:
+                amount *= 0.7 # 강공격도 어느 정도 경감
+
         if attack_type == "LIGHT":
             base_stun = 7 if is_guarding else 12
             base_recovery = 12 if is_guarding else 10
         else: 
             base_stun = 10 if is_guarding else 20
-            base_recovery = 20 if is_guarding else 15
+            base_recovery = 20 if is_guarding else 5
 
         combo_count = attacker.combo_step if hasattr(attacker, 'combo_step') else 1
         scale = COMBO_SCALING.get(combo_count, MIN_SCALING) 
@@ -347,7 +401,7 @@ class Entity(pygame.sprite.Sprite):
         self.timer = 0 # 🌟 [추가] 피격 애니메이션이 첫 프레임부터 시작하도록 초기화
         self.is_attacking = False
         attacker.recovery_frames = base_recovery
-    
+
         self.hit_stun_timer = final_stun 
         self.state = "HIT"
         attacker.recovery_frames = base_recovery 
@@ -419,6 +473,9 @@ class Entity(pygame.sprite.Sprite):
     def handle_attack(self, attack_type):
         if not self.is_grounded: return False
 
+        if self.is_attacking: return False 
+
+
         # 🌟 [추가] 캐릭터별 공격 애니메이션 매핑 분기
         target_state = "ATK1" # 기본값
         
@@ -447,6 +504,10 @@ class Entity(pygame.sprite.Sprite):
         self.has_hit = False
         self.recovery_timer = 0
         self.hitbox = pygame.Rect(0, 0, 0, 0)
+
+        if self.state == "DASH":
+            self.dash_timer = 0
+
         return True
 
     def register_hit(self):
@@ -458,7 +519,7 @@ class Entity(pygame.sprite.Sprite):
             self.used_cancel_in_combo = False 
         
         # 🌟 타격 성공 시 콤보 유지시간을 35프레임(약 0.6초)으로 설정!
-        self.combo_timer = 35 
+        self.combo_timer = 60
         return self.combo_step
 
     def apply_physics(self):
@@ -524,8 +585,9 @@ class Entity(pygame.sprite.Sprite):
             self.frame_index = (pygame.time.get_ticks() // 50) % len(frames)
             self.image = frames[self.frame_index]
             if self.dash_timer <= 0:
-                self.state = "IDLE"
+                self.state = "IDLE" # 확실하게 상태를 돌려줌
                 self.vel_x = 0
+                self.is_cancel_dash = False # 캔슬 플래그 초기화
                 self.execute_buffer()
 
         elif self.is_attacking:
@@ -688,11 +750,20 @@ class Entity(pygame.sprite.Sprite):
             self.hurtbox_h
         )
 
-        if self.state == "DASH" or self.state == "HIT" or self.is_attacking:
-            if pygame.time.get_ticks() % 6 == 0:
+        is_active = (self.state == "DASH" or self.state == "HIT" or self.is_attacking)
+        if is_active or (self.is_boss and self.state != "DEATH"):
+            tick = 3 if self.is_boss else 6 # 보스는 더 자주 잔상 생성
+            if pygame.time.get_ticks() % tick == 0:
                 ghost_img = self.image.copy()
-                ghost_img.fill((150, 200, 255, 255), special_flags=pygame.BLEND_RGBA_MULT) 
-                self.ghosts.append([ghost_img, self.rect.copy(), 100])
+                if self.is_boss:
+                # 보스는 검붉은색 오라
+                    ghost_img.fill((200, 30, 30, 255), special_flags=pygame.BLEND_RGBA_MULT)
+                    self.ghosts.append([ghost_img, self.rect.copy(), 150]) # 더 오래 남음
+                else:
+                # 일반 캐릭터는 푸른색 잔상
+                    ghost_img.fill((150, 200, 255, 255), special_flags=pygame.BLEND_RGBA_MULT) 
+                    self.ghosts.append([ghost_img, self.rect.copy(), 100])
+
 
         for g in self.ghosts[:]:
             g[2] -= 25
@@ -747,8 +818,7 @@ class Enemy(Entity):
 
     def update_ai(self, target):
     # 후딜레이(RECOVERY) 상태일 때도 AI가 아무 행동(점프, 이동, 가드)을 못 하게 막음
-        if self.state in ["DEATH", "HIT", "RECOVERY"]:
-            return 
+        if self.state == "DEATH": return 
         
         if self.is_boss:
             if not self.is_transforming:
@@ -764,6 +834,9 @@ class Enemy(Entity):
                 self.pre_transform_timer -= 1
                 self.vel_x = 0
                 
+                if self.state == "HIT":
+                    self.state = "IDLE" 
+
                 # 1초 대기가 끝나면 쾅! 하고 변신
                 if self.pre_transform_timer <= 0:
                     new_form = "C1" if self.char_id == "A2" else "A2"
@@ -778,7 +851,9 @@ class Enemy(Entity):
                     target.state = "HIT"
                     
                 return # 변신 중에는 아래의 공격/이동 AI를 실행하지 않음
-
+        if self.state in ["HIT", "RECOVERY"]:
+            return # <--- 이제 타이머는 위에서 이미 계산됐으므로 안심하고 리턴 가능
+    
         is_boss = getattr(self, 'is_boss', False)
         cfg_id = "BOSS" if is_boss else self.char_id
         cfg = AI_BRAIN_CONFIG.get(cfg_id, AI_BRAIN_CONFIG["B1"]) 
@@ -919,6 +994,9 @@ def main():
     stage_info = STAGE_SEQUENCE[current_stage_idx]
     countdown_timer = 240
 
+    active_explosions = []
+    death_delay_timer = 0 # 보스 사망 후 화면 멈춤 및 폭발 연출용
+
     player = Entity(200, GROUND_Y, "A1", PLAYER_MAX_HP)
     # 🌟 is_boss 정보를 생성할 때 넘겨줌
     enemy = Enemy(1000, GROUND_Y, stage_info["id"], stage_info["hp"], stage_info.get("boss", False))
@@ -951,6 +1029,12 @@ def main():
                 # F1, F2는 시스템 단축키라 언제든 작동
                 if event.key == pygame.K_F1: player.god_mode = not player.god_mode
                 if event.key == pygame.K_F2: enemy.god_mode = not enemy.god_mode
+                if event.key == pygame.K_F4:
+                    if enemy.state != "DEATH":
+                        enemy.hp = 0
+                        enemy.state = "DEATH"
+                        enemy.timer = 0
+                        print("💀 DEBUG: ENEMY KILLED!")
 
                 if event.key == pygame.K_F3:
                     if current_stage_idx < len(STAGE_SEQUENCE) - 1:
@@ -997,19 +1081,23 @@ def main():
                         is_back_pressed = (keys[pygame.K_a] and player.facing_right) or (keys[pygame.K_d] and not player.facing_right)
                         
                         # C1이고, 등 뒤 방향키를 누른 채 i를 누르면 양방향 타격기(REVERSE) 발동
-                        if player.char_id == "C1" and is_back_pressed:
-                            if player.is_grounded and (player.state in ["IDLE", "RUN", "DASH"] or player.is_cancel_dash): 
+                        if player.is_grounded and player.state in ["IDLE", "RUN", "DASH"]:
+                            if player.char_id == "C1" and is_back_pressed:
                                 player.handle_attack("REVERSE")
-                            else: player.add_to_buffer("REVERSE")
-                        else:
-                            if player.is_grounded and (player.state in ["IDLE", "RUN", "DASH"] or player.is_cancel_dash): 
+                            else:
                                 player.handle_attack("LIGHT")
-                            else: player.add_to_buffer("LIGHT")
+                        else:
+                            # 그 외의 상태(공격 중 등)일 때는 선입력(buffer)에 저장
+                            if player.char_id == "C1" and is_back_pressed:
+                                player.add_to_buffer("REVERSE")
+                            else:
+                                player.add_to_buffer("LIGHT")
 
                     if event.key == pygame.K_o:
-                        if player.is_grounded and (player.state in ["IDLE", "RUN", "DASH"] or player.is_cancel_dash): 
+                        if player.is_grounded and player.state in ["IDLE", "RUN", "DASH"]:
                             player.handle_attack("HEAVY")
-                        else: player.add_to_buffer("HEAVY")
+                        else:
+                            player.add_to_buffer("HEAVY")
 
         if hitstop_timer > 0:
             hitstop_timer -= 1
@@ -1058,22 +1146,34 @@ def main():
             if enemy.state == "DEATH" and enemy.frame_index == len(enemy.animations["DEATH"]) - 1:
     # 2초(120프레임) 정도 대기 후 다음 스테이지로 전환하는 타이머를 써도 좋지만, 
     # 일단 즉시 전환 로직입니다.
-                if current_stage_idx < len(STAGE_SEQUENCE) - 1:
-                    current_stage_idx += 1
-                    next_stage = STAGE_SEQUENCE[current_stage_idx]
-        
-                    enemy.kill() 
-                    # 🌟 Enemy를 생성하는 순간에 next_stage의 "boss" 여부를 바로 넘겨줌 (이때 이미지가 붉은색으로 바뀜!)
-                    enemy = Enemy(1100, GROUND_Y, next_stage["id"], next_stage["hp"], next_stage.get("boss", False))
-                    all_sprites.add(enemy)
-        
-        # 플레이어 위치 초기화 및 약간의 체력 회복 (기획적 허용)
-                    player.rect.left = 200
-                    player.hp = player.max_hp # 풀피 회복!
-                    countdown_timer = 240 # 카운트다운 초기화
-                    print(f"NEXT STAGE: {next_stage['name']}")
-                else:
-                    print("ALL STAGES CLEARED!") # 게임 엔딩 처리
+                if enemy.is_boss and death_delay_timer == 0:
+                    # 🌟 보스가 터지는 순간!
+                    active_explosions.append(DeathExplosion(enemy.hurtbox.centerx, enemy.hurtbox.centery - 100))
+                    death_delay_timer = 100 
+                    
+                    # 🌟 시간을 잠시 멈춘 듯한 효과 (히트스탑)
+                    hitstop_timer = 20 
+                    
+                    # 🌟 화면 진동은 아주 강하게
+                    screen_shake_timer = 50
+                    screen_shake_intensity = 25
+
+                if not enemy.is_boss or (enemy.is_boss and death_delay_timer == 1):
+                    if current_stage_idx < len(STAGE_SEQUENCE) - 1:
+                        current_stage_idx += 1
+                        next_stage = STAGE_SEQUENCE[current_stage_idx]
+                        enemy.kill() 
+                        enemy = Enemy(1100, GROUND_Y, next_stage["id"], next_stage["hp"], next_stage.get("boss", False))
+                        all_sprites.add(enemy)
+                        player.rect.left = 200
+                        player.hp = player.max_hp
+                        countdown_timer = 240 
+                        death_delay_timer = 0 # 타이머 초기화
+                        print(f"NEXT STAGE: {next_stage['name']}")
+                    else:
+                        print("ALL STAGES CLEARED!")
+            if death_delay_timer > 0:
+                death_delay_timer -= 1
 
             target_cam_x = (player.rect.centerx + enemy.rect.centerx) / 2 - SCREEN_WIDTH // 2
             
@@ -1117,6 +1217,11 @@ def main():
                 if not enemy.has_hit:
                     enemy_atk_type = "LIGHT" if enemy.state == "ATK1" else "HEAVY"
                     
+                    if enemy.is_boss:
+                        screen_shake_timer, screen_shake_intensity = 20, 15
+                    else:
+                        screen_shake_timer, screen_shake_intensity = 10, 5
+
                     combo_count = enemy.register_hit()
                     p2_combo_display.trigger(combo_count) 
 
@@ -1170,6 +1275,18 @@ def main():
             pygame.draw.line(screen, (255, 255, 0), start_pos, end_pos, 4) # 두께 4의 노란선
 
         if getattr(enemy, 'is_transforming', False):
+            center_pos = (enemy.rect.centerx + offset_x - CAMERA_X, enemy.rect.centery + offset_y)
+
+            pillar = pygame.Surface((120, SCREEN_HEIGHT), pygame.SRCALPHA)
+            alpha = random.randint(50, 150)
+            pygame.draw.rect(pillar, (255, 0, 0, alpha), (0, 0, 120, SCREEN_HEIGHT))
+            screen.blit(pillar, (enemy.rect.centerx - 60 - CAMERA_X, 0))
+
+            radius1 = enemy.pre_transform_timer * 5
+            pygame.draw.circle(screen, (255, 0, 0), center_pos, radius1, 5)
+        
+            screen_shake_timer, screen_shake_intensity = 2, 8
+
             # 시간이 지날수록 원이 작아지며 캐릭터에게 흡수되는 연출
             radius1 = enemy.pre_transform_timer * 3
             radius2 = enemy.pre_transform_timer * 1.5
@@ -1271,6 +1388,11 @@ def main():
             pygame.draw.circle(screen, color, (SCREEN_WIDTH - 60 - (i * 30), 680), 10)
         p2_dash_text = font_small.render(f"DASH: {enemy.dash_charges}", True, (255, 255, 255))
         screen.blit(p2_dash_text, (SCREEN_WIDTH - 240, 670))
+
+        for exp in active_explosions:
+            exp.update()
+            exp.draw(screen, CAMERA_X)
+        active_explosions = [e for e in active_explosions if e.shards]
 
         pygame.display.flip()
         clock.tick(FPS)
