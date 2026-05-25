@@ -123,6 +123,38 @@ AI_BRAIN_CONFIG = {
 }
 
 
+SOUNDS = {}
+
+def play_sound(name):
+    if name in SOUNDS and SOUNDS[name]:
+        SOUNDS[name].play()
+
+def play_sound_slow(name, factor=0.5):
+    if name in SOUNDS and SOUNDS[name]:
+        try:
+            sound = SOUNDS[name]
+            # 오디오 소스의 순수 PCM 바이트 데이터를 가져옵니다.
+            raw_bytes = sound.get_raw()
+            
+            # 16비트 스테레오 오디오 기준 1프레임은 4바이트(좌우 채널 각각 2바이트)입니다.
+            frame_size = 4
+            repeat_factor = int(1.0 / factor)
+            
+            new_bytes = bytearray()
+            # 4바이트 단위로 오디오 프레임을 쪼개어 단순 바이트 곱셈 연산으로 샘플을 늘립니다.
+            for i in range(0, len(raw_bytes), frame_size):
+                frame = raw_bytes[i : i + frame_size]
+                if len(frame) == frame_size:
+                    new_bytes.extend(frame * repeat_factor)
+                    
+            # 수정된 순수 바이트 버퍼를 통해 pygame Sound 객체를 새로 생성해 재생합니다.
+            slowed_sound = pygame.mixer.Sound(buffer=bytes(new_bytes))
+            slowed_sound.play()
+        except Exception as e:
+            # 예상치 못한 형식 오류 발생 시 시스템 중단 없이 원본 일반 속도로 안전하게 대체 재생합니다.
+            print(f"⚠️ 사운드 감속 재생 실패 (일반 사운드로 대체): {e}")
+            SOUNDS[name].play()
+
 class DeathExplosion:
     def __init__(self, x, y):
         self.shards = []
@@ -211,7 +243,7 @@ class PixelGuard:
 
 class ComboDisplay:
     def __init__(self):
-        self.font = pygame.font.SysFont("impact", 60, bold=True) # 임팩트 있는 폰트
+        self.font = pygame.font.SysFont("impact", 55)  # 임팩트 있는 폰트
         self.timer = 0
         self.active = False
         self.combo_count = 0
@@ -312,7 +344,7 @@ class Entity(pygame.sprite.Sprite):
         self.animations = {}
         data = CHAR_DATA.get(char_id, CHAR_DATA["A1"])
         for state, (suffix, count, hit_idx) in data.items(): 
-            path = os.path.join("dd\\assets", f"{self.char_id}_{suffix}.png")
+            path = os.path.join("dd", "assets", f"{self.char_id}_{suffix}.png")
             frames = load_sprite_sheet(path, count)
             
             # 🌟 [이미지 스왑 핵심] 보스일 경우 이미지를 붉은색으로 물들임!
@@ -341,9 +373,9 @@ class Entity(pygame.sprite.Sprite):
         if char_id == "A1":
             self.hurtbox_w, self.hurtbox_h = 60, 100 # 플레이어는 세로로 긴 형태
         elif char_id == "B1":
-            self.hurtbox_w, self.hurtbox_h = 70, 40  # 적(B1)은 낮고 뭉툭한 형태
+            self.hurtbox_w, self.hurtbox_h = 150, 40  # 적(B1)은 낮고 뭉툭한 형태
         else:
-            self.hurtbox_w, self.hurtbox_h = 60, 80
+            self.hurtbox_w, self.hurtbox_h = 80, 80
             
         self.hurtbox = pygame.Rect(0, 0, 0, 0) # 실제 좌표가 담길 박스
 
@@ -370,7 +402,7 @@ class Entity(pygame.sprite.Sprite):
             base_stun = 7 if is_guarding else 12
             base_recovery = 12 if is_guarding else 10
         else: 
-            base_stun = 10 if is_guarding else 20
+            base_stun = 10 if is_guarding else 35
             base_recovery = 20 if is_guarding else 5
 
         combo_count = attacker.combo_step if hasattr(attacker, 'combo_step') else 1
@@ -386,8 +418,11 @@ class Entity(pygame.sprite.Sprite):
             self.guard_effect_timer = 10
             self.is_blocking = True # 🌟 [가드 성공 기록]
         else:
-            base_knockback = KNOCKBACK_HIT
-            self.is_blocking = False # 🌟 [클린 히트 기록]
+            if attack_type == "HEAVY":
+                base_knockback = 5  # 원래는 KNOCKBACK_HIT(12) 였음
+            else:
+                base_knockback = KNOCKBACK_HIT
+                self.is_blocking = False
 
         final_knockback = base_knockback
 
@@ -398,13 +433,9 @@ class Entity(pygame.sprite.Sprite):
     
         self.hit_stun_timer = final_stun 
         self.state = "HIT"
-        self.timer = 0 # 🌟 [추가] 피격 애니메이션이 첫 프레임부터 시작하도록 초기화
+        self.timer = 0 # 피격 애니메이션 첫 프레임부터 시작하도록 초기화
         self.is_attacking = False
         attacker.recovery_frames = base_recovery
-
-        self.hit_stun_timer = final_stun 
-        self.state = "HIT"
-        attacker.recovery_frames = base_recovery 
     
         if self.hp <= 0:
             self.hp = 0
@@ -412,6 +443,10 @@ class Entity(pygame.sprite.Sprite):
             if self.state != "DEATH":
                 self.state = "DEATH"
                 self.timer = 0
+                # 보스가 기를 모으는 중에 체력이 0이 되었을 경우 이펙트 플래그를 명확히 해제합니다.
+                if hasattr(self, 'is_transforming'):
+                    self.is_transforming = False
+                    self.pre_transform_timer = 0
         else:
             self.vel_x = -final_knockback if self.facing_right else final_knockback
         
@@ -445,6 +480,7 @@ class Entity(pygame.sprite.Sprite):
                     self.combo_timer = 120
                     self.cancel_ui_timer = 30 
                     self.used_cancel_in_combo = True # 🌟 [추가] 이번 콤보에선 게이지 획득 불가!
+                    play_sound("cancel") # 콤보 캔슬음 재생
                 else:
                     return False
 
@@ -656,6 +692,8 @@ class Entity(pygame.sprite.Sprite):
                     whiff_penalty = 35 if atk_type == "LIGHT" else 50
                     self.recovery_timer = base_rec + whiff_penalty 
                     
+                    play_sound("miss") # 헛방 사운드 재생
+
                     # 시각적 피드백: 헛쳤을 때 캐릭터를 살짝 검게 만들어 무방비 상태임을 표시 (선택 사항)
                     print(f"⚠️ {self.char_id} WHIFF!!! TOTAL RECOVERY: {self.recovery_timer}f")
                 else:
@@ -792,7 +830,7 @@ class Enemy(Entity):
         
         # 새로운 애니메이션 로드 및 보스(붉은색) 필터 적용
         for state, (suffix, count, hit_idx) in data.items(): 
-            path = os.path.join("dd\\assets", f"{self.char_id}_{suffix}.png")
+            path = os.path.join("dd", "assets", f"{self.char_id}_{suffix}.png")
             frames = load_sprite_sheet(path, count)
             tinted_frames = []
             for frame in frames:
@@ -819,6 +857,13 @@ class Enemy(Entity):
     def update_ai(self, target):
     # 후딜레이(RECOVERY) 상태일 때도 AI가 아무 행동(점프, 이동, 가드)을 못 하게 막음
         if self.state == "DEATH": return 
+        
+        # [추가] 플레이어가 죽으면 AI는 속도를 0으로 만들고 가드를 푼 채 IDLE(대기) 상태로 굳어집니다.
+        if target.state == "DEATH":
+            self.vel_x = 0
+            self.is_guarding = False
+            self.state = "IDLE"
+            return
         
         if self.is_boss:
             if not self.is_transforming:
@@ -894,7 +939,11 @@ class Enemy(Entity):
             if self.has_hit and self.dash_charges > 0 and random.random() < 0.7: 
                 state_info = CHAR_DATA[self.char_id].get(self.state)
                 if state_info and state_info[2] is not None:
-                    hit_end_f = (state_info[2] + 1) * (18/state_info[1]) 
+                        # 현재 공격 타입(약/강)에 맞춰 프레임 기준을 유동적으로 결정합니다.
+                    atk_type = getattr(self, 'current_atk_type', "LIGHT")
+                    total_frames = LIGHT_ATK_TOTAL_FRAMES if atk_type == "LIGHT" else HEAVY_ATK_TOTAL_FRAMES
+                        
+                    hit_end_f = (state_info[2] + 1) * (total_frames / state_info[1])
                     if self.timer > hit_end_f:
                         self.trigger_dash(is_forward=True)
                         self.decision_timer = 0 
@@ -908,29 +957,48 @@ class Enemy(Entity):
         # ====================================================================
         if target.is_attacking and abs_dist < attack_reach * 1.5:
             if self.decision_timer <= 0:
-                # 🌟 뒤잡기 점프: 게이지 검사(dash_charges > 0) 삭제! 
+                # 플레이어의 현재 공격 타입 확인
+                player_atk_type = getattr(target, 'current_atk_type', "LIGHT")
+
+                # [정밀 제어] 플레이어가 실제로 AI 방향을 바라보고 공격하는지 판별 (뒤통수 공격에 회피 낭비 방지)
+                is_player_facing_me = (dist > 0 and not target.facing_right) or (dist < 0 and target.facing_right)
+
+                # 1. 플레이어 강공격(HEAVY) 감지 시 안전거리를 계산하여 파고들기 회피
+                if player_atk_type == "HEAVY" and is_player_facing_me and self.dash_cooldown_timer <= 0:
+                    # 수학적 안전 한계선 검사 (abs_dist < 380픽셀이어야 앞대쉬 후 사각지대 진입 또는 역가드 성립)
+                    if abs_dist < 380:
+                        if random.random() < 0.8:  # 80% 확률로 시도
+                            self.trigger_dash(is_forward=True)
+                            self.decision_timer = 20
+                            print(f"🤖 AI: 안전거리 내 진입 확인({int(abs_dist)}px)! 앞대쉬로 사각지대 돌파!")
+                            return
+
+                # [강화] 2. 플레이어가 일반 공격 중일 때, 쿨타임이 없다면 백대쉬로 안전하게 피합니다.
+                if self.dash_cooldown_timer <= 0 and random.random() < cfg["dash_back_prob"]: 
+                    self.trigger_dash(is_forward=False)
+                    self.decision_timer = 15
+                    print("🤖 AI: 플레이어 공격 감지! 백대쉬로 거리 벌리기!")
+                    return
+                
+                # 3. 뒤잡기 점프
                 if target.state == "ATK1" and random.random() < cfg["back_catch_prob"]: 
                     self.vel_y = JUMP_FORCE 
                     self.state = "DASH" 
                     self.dash_timer = 20 
                     self.vel_x = (DASH_SPEED * 1.3) if self.facing_right else (-DASH_SPEED * 1.3)
                     self.decision_timer = 30 
+                    play_sound("jump") 
                     print("🤖 AI: 완벽한 뒤잡기 점프!")
                     return
                 
+                # 4. 제자리 가드
                 if random.random() < cfg["guard_prob"]: 
                     self.is_guarding = True 
                     self.decision_timer = 10
                     return
                 
-                # 🌟 백대쉬 회피: 게이지 검사 삭제!
-                if random.random() < cfg["dash_back_prob"]: 
-                    self.trigger_dash(is_forward=False)
-                    self.decision_timer = 15
-                    return
-                
                 self.decision_timer = 10 
-            return 
+            return
 
         # ====================================================================
         # ⚔️ [우선순위 2] 딜캐 (상대가 헛치거나 후딜레이 중일 때)
@@ -967,6 +1035,7 @@ class Enemy(Entity):
                 self.vel_y = JUMP_FORCE
                 self.vel_x = WALK_SPEED if dist > 0 else -WALK_SPEED
                 self.decision_timer = 20
+                play_sound("jump") # AI 점프음 재생
             else:
                 self.vel_x = WALK_SPEED if dist > 0 else -WALK_SPEED
                 self.decision_timer = 5 
@@ -981,7 +1050,37 @@ class Enemy(Entity):
 def main():
     global CAMERA_X 
 
+    pygame.mixer.pre_init(44100, -16, 2, 512) # 이전 답변에서 적용한 지연 시간 최적화 포함
     pygame.init()
+
+    global SOUNDS
+
+    sound_path = os.path.join("dd", "assets", "sounds")
+    sound_files = {
+        "3": "threey.wav",
+        "2": "two.wav",
+        "1": "one.wav",
+        "fight": "fight.wav",
+        "jump": "jump.wav",
+        "cancel": "cancel.wav",
+        "light_hit": "low.wav",
+        "heavy_hit": "hight.wav",
+        "hurt": "hurt.wav",
+        "miss": "miss.wav"
+    }
+    
+    # 콤보 사운드 (1~10) 일괄 등록
+    for i in range(1, 11):
+        sound_files[f"combo_{i}"] = f"combo {i}.wav"
+
+    for key, filename in sound_files.items():
+        try:
+            SOUNDS[key] = pygame.mixer.Sound(os.path.join(sound_path, filename))
+        except Exception as e:
+            print(f"⚠️ 사운드 로드 실패 ({filename}): {e}")
+            SOUNDS[key] = None
+
+    
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
     pygame.display.set_caption("The Last Stand")
     clock = pygame.time.Clock()
@@ -996,6 +1095,8 @@ def main():
 
     active_explosions = []
     death_delay_timer = 0 # 보스 사망 후 화면 멈춤 및 폭발 연출용
+    game_over_alpha = 0   # 🌟 플레이어 사망 시 화면 어두워짐 효과를 제어할 변수를 추가합니다.
+    game_cleared = False  # 🌟 게임 클리어 상태 플래그를 추가합니다
 
     player = Entity(200, GROUND_Y, "A1", PLAYER_MAX_HP)
     # 🌟 is_boss 정보를 생성할 때 넘겨줌
@@ -1021,6 +1122,12 @@ def main():
         keys = pygame.key.get_pressed()
         
         if countdown_timer > 0:
+            # 🌟 텍스트가 바뀌는 정확한 프레임에 음성을 1번씩만 재생
+            if countdown_timer == 240: play_sound("3")
+            elif countdown_timer == 180: play_sound("2")
+            elif countdown_timer == 120: play_sound("1")
+            elif countdown_timer == 60: play_sound("fight")
+            
             countdown_timer -= 1 # 🌟 [추가] 카운트다운 줄이기
 
         for event in pygame.event.get():
@@ -1035,6 +1142,11 @@ def main():
                         enemy.state = "DEATH"
                         enemy.timer = 0
                         print("💀 DEBUG: ENEMY KILLED!")
+                
+                if event.key == pygame.K_F5:
+                    if enemy.state != "DEATH":
+                        enemy.hp = 1
+                        print("🎯 DEBUG: ENEMY HP SET TO 1!")
 
                 if event.key == pygame.K_F3:
                     if current_stage_idx < len(STAGE_SEQUENCE) - 1:
@@ -1075,6 +1187,7 @@ def main():
                     if event.key == pygame.K_w and player.is_grounded: 
                         if not player.is_attacking and player.state not in ["HIT", "RECOVERY", "DASH"]:
                             player.vel_y = JUMP_FORCE
+                            play_sound("jump") # 점프음 재생
                     
                     if event.key == pygame.K_i:
                         # 🌟 [추가] 캐릭터가 바라보는 반대(등 뒤) 방향키를 누르고 있는지 체크
@@ -1143,13 +1256,14 @@ def main():
             combo_display.update()
             all_sprites.update()
 
-            if enemy.state == "DEATH" and enemy.frame_index == len(enemy.animations["DEATH"]) - 1:
-    # 2초(120프레임) 정도 대기 후 다음 스테이지로 전환하는 타이머를 써도 좋지만, 
-    # 일단 즉시 전환 로직입니다.
+            if enemy.state == "DEATH" and enemy.frame_index == len(enemy.animations["DEATH"]) - 1 and not game_cleared:
                 if enemy.is_boss and death_delay_timer == 0:
                     # 🌟 보스가 터지는 순간!
                     active_explosions.append(DeathExplosion(enemy.hurtbox.centerx, enemy.hurtbox.centery - 100))
                     death_delay_timer = 100 
+                    
+                    # 🌟 대폭발 이펙트와 화면 진동 타이밍에 맞춰 낮고 묵직하게 느려진 슬로우 타격음을 재생합니다.
+                    play_sound_slow("light_hit", factor=0.5)
                     
                     # 🌟 시간을 잠시 멈춘 듯한 효과 (히트스탑)
                     hitstop_timer = 20 
@@ -1168,10 +1282,11 @@ def main():
                         player.rect.left = 200
                         player.hp = player.max_hp
                         countdown_timer = 240 
-                        death_delay_timer = 0 # 타이머 초기화
+                        death_delay_timer = 0 
                         print(f"NEXT STAGE: {next_stage['name']}")
                     else:
                         print("ALL STAGES CLEARED!")
+                        game_cleared = True  # 🌟 보스의 상태를 억지로 바꾸지 않고, 클리어 플래그만 세워 루프를 차단합니
             if death_delay_timer > 0:
                 death_delay_timer -= 1
 
@@ -1200,6 +1315,9 @@ def main():
 
                     screen_shake_timer = 10 
                     screen_shake_intensity = 8 if atk_type == "HEAVY" else 4 
+                    
+                    is_boss_fatal = (enemy.is_boss and enemy.state != "DEATH")
+
 
                     if enemy.take_damage(10, player, atk_type): 
                         # 🌟 [무한 콤보 픽스] 이번 콤보에서 캔슬 대쉬를 안 썼을 때만 게이지 상승!
@@ -1211,6 +1329,12 @@ def main():
             
                     hitstop_timer = HIT_STOP_LIGHT if atk_type == "LIGHT" else HIT_STOP_HEAVY
                     player.has_hit = True
+
+                    play_sound("light_hit")
+
+                    play_sound("hurt")
+                    if combo_count >= 1:
+                        play_sound(f"combo_{min(combo_count, 10)}")
 
             # 2. 적 -> 플레이어 공격
             if enemy.hitbox.colliderect(player.hurtbox):
@@ -1235,6 +1359,12 @@ def main():
                             if enemy.hit_gauge >= 3:
                                 enemy.hit_gauge = 0
                                 enemy.dash_charges = 1
+                    
+                    play_sound("light_hit")
+                    play_sound("hurt")
+
+                    if combo_count >= 1:
+                        play_sound(f"combo_{min(combo_count, 10)}")
                     
 
         # 그리기
@@ -1393,6 +1523,31 @@ def main():
             exp.update()
             exp.draw(screen, CAMERA_X)
         active_explosions = [e for e in active_explosions if e.shards]
+
+        # 🌟 [신규 추가] 플레이어 사망 시 검은 오버레이와 함께 DEAD 텍스트를 출력합니다.
+        if player.state == "DEATH":
+            if game_over_alpha < 255:
+                game_over_alpha += 4  # 프레임마다 불투명도를 높여 서서히 어두워지게 만듭니다 (약 1초 소요)
+            
+            # 전체 화면 크기의 검은색 서피스 blit
+            black_surf = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+            black_surf.fill((0, 0, 0))
+            black_surf.set_alpha(game_over_alpha)
+            screen.blit(black_surf, (0, 0))
+
+            # 화면이 적당히 어두워진 시점부터 텍스트 출력
+            if game_over_alpha >= 180:
+                dead_font = pygame.font.SysFont("impact", 130)
+                
+                # 어두운 감성에 어울리는 입체적인 검은색 그림자와 핏빛 텍스트
+                dead_text = dead_font.render("DEAD", True, (220, 0, 0))
+                dead_shadow = dead_font.render("DEAD", True, (0, 0, 0))
+                
+                shadow_rect = dead_shadow.get_rect(center=(SCREEN_WIDTH // 2 + 5, SCREEN_HEIGHT // 2 + 5))
+                text_rect = dead_text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))
+                
+                screen.blit(dead_shadow, shadow_rect)
+                screen.blit(dead_text, text_rect)
 
         pygame.display.flip()
         clock.tick(FPS)
