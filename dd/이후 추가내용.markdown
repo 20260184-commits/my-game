@@ -18,3 +18,5 @@
 →
  main.py 드로잉 순서 수정
 빈 공간을 채워 게임의 '완성도'를 높입니다.
+
+python -m PyInstaller --onedir --noconsole --add-data 'assets;assets' main.py
