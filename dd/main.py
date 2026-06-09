@@ -1132,7 +1132,7 @@ class Entity(pygame.sprite.Sprite):
                     self.combo_timer = 0 
                     # 🌟 [1번 피드백 반영] 약공격은 허공에 가볍게 내밀 수 있도록 후딜 패널티를 2프레임으로 하향 (견제 유도)
                     # 강공격 또한 리스크를 합리화하기 위해 패널티를 10프레임으로 하향 조정합니다.
-                    whiff_penalty = 2 if atk_type == "LIGHT" else 10
+                    whiff_penalty = 7 if atk_type == "LIGHT" else 10
                     self.recovery_timer = base_rec + whiff_penalty 
                     play_sound("miss")
                 else:
@@ -1848,7 +1848,20 @@ def main():
             
             # 테마와 조화로운 옵션 텍스트로 수정
             menu_options = ["PURIFY FOREST (START)", "SETTINGS", "EXIT"]
+            
+            # 🌟 [최적화 적용] 매 프레임 텍스트 치수를 측정하는 대신, 가독성 높은 고정 클릭 영역(Rect)을 설계하여 연산량을 최소화합니다.
+            menu_rects = []
+            mouse_pos = pygame.mouse.get_pos()
+            
             for idx, opt in enumerate(menu_options):
+                # 각 메뉴 항목의 영역을 고정 Rect로 생성 (X좌표는 메뉴 박스의 중앙, Y좌표는 항목의 위치)
+                item_rect = pygame.Rect(SCREEN_WIDTH // 2 - 220, 350 + idx * 65, 440, 50)
+                menu_rects.append(item_rect)
+                
+                # 마우스 커서가 영역 안에 들어가면 선택 인덱스(menu_index)를 즉시 동기화합니다.
+                if item_rect.collidepoint(mouse_pos):
+                    menu_index = idx
+
                 if idx == menu_index:
                     color = (0, 255, 150)
                     opt_text = f">  {opt}  <"
@@ -1861,6 +1874,22 @@ def main():
                 
             for event in pygame.event.get():
                 if event.type == pygame.QUIT: running = False
+                
+                # 🌟 [마우스 클릭 이벤트 처리 추가]
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    if event.button == 1: # 마우스 좌클릭인 경우에만 격발
+                        for idx, rect in enumerate(menu_rects):
+                            if rect.collidepoint(event.pos):
+                                if idx == 0:
+                                    GAME_STATE = "GAMEPLAY"
+                                    match_timer = 60.0
+                                    time_over = False
+                                elif idx == 1:
+                                    GAME_STATE = "SETTINGS"
+                                    settings_index = 0
+                                elif idx == 2:
+                                    running = False
+                                    
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_UP:
                         menu_index = (menu_index - 1) % len(menu_options)
@@ -1909,20 +1938,75 @@ def main():
                 "BACK TO MAIN MENU"
             ]
             
+            settings_rects = []
+            mouse_pos = pygame.mouse.get_pos()
+            
             for idx, text in enumerate(settings_options):
+                # 정중앙 중심 좌우 250px 영역을 설정 클릭용 감지 박스로 지정
+                opt_rect = pygame.Rect(SCREEN_WIDTH // 2 - 250, 185 + idx * 55, 500, 45)
+                settings_rects.append(opt_rect)
+                
+                # 마우스 호버 상태 적용
+                if opt_rect.collidepoint(mouse_pos):
+                    settings_index = idx
+
                 color = (255, 200, 0) if idx == settings_index else (140, 140, 140)
                 opt_surf = opt_font.render(text, True, color)
                 screen.blit(opt_surf, (SCREEN_WIDTH // 2 - opt_surf.get_width() // 2, 190 + idx * 55))
                 
             for event in pygame.event.get():
                 if event.type == pygame.QUIT: running = False
+                
+                # 🌟 [마우스 클릭 조작 구조 추가]
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    if event.button == 1:  # 좌클릭 감지
+                        for idx, rect in enumerate(settings_rects):
+                            if rect.collidepoint(event.pos):
+                                # 1. BGM 볼륨 (중앙 기준 왼쪽 영역 클릭 시 감소, 오른쪽 클릭 시 증가)
+                                if idx == 0:
+                                    if event.pos[0] < SCREEN_WIDTH // 2:
+                                        BGM_VOLUME = max(0.0, round(BGM_VOLUME - 0.1, 1))
+                                    else:
+                                        BGM_VOLUME = min(1.0, round(BGM_VOLUME + 0.1, 1))
+                                    apply_volume()
+                                    save_settings()
+                                    
+                                # 2. SFX 볼륨 (동일 구조 적용)
+                                elif idx == 1:
+                                    if event.pos[0] < SCREEN_WIDTH // 2:
+                                        SFX_VOLUME = max(0.0, round(SFX_VOLUME - 0.1, 1))
+                                    else:
+                                        SFX_VOLUME = min(1.0, round(SFX_VOLUME + 0.1, 1))
+                                    apply_volume()
+                                    save_settings()
+                                    
+                                # 3. 히트박스 토글
+                                elif idx == 2:
+                                    SHOW_HITBOXES = not SHOW_HITBOXES
+                                    save_settings()
+                                    
+                                # 4. FPS 토글
+                                elif idx == 3:
+                                    SHOW_FPS = not SHOW_FPS
+                                    save_settings()
+                                    
+                                # 5. 키 바인딩 서브메뉴 진입
+                                elif idx == 4:
+                                    GAME_STATE = "KEY_SETTINGS"
+                                    key_settings_index = 0
+                                    
+                                # 6. 메인 메뉴 귀환
+                                elif idx == 5:
+                                    GAME_STATE = "MENU"
+                                    settings_index = 0
+                                    
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_UP:
                         settings_index = (settings_index - 1) % len(settings_options)
                     elif event.key == pygame.K_DOWN:
                         settings_index = (settings_index + 1) % len(settings_options)
                     
-                    # BGM 볼륨 조절
+                    # (기존 키보드 입력 매핑 구조 유지)
                     elif settings_index == 0:
                         if event.key == pygame.K_LEFT:
                             BGM_VOLUME = max(0.0, round(BGM_VOLUME - 0.1, 1))
@@ -1933,7 +2017,6 @@ def main():
                             apply_volume()
                             save_settings()
                             
-                    # SFX 볼륨 조절
                     elif settings_index == 1:
                         if event.key == pygame.K_LEFT:
                             SFX_VOLUME = max(0.0, round(SFX_VOLUME - 0.1, 1))
@@ -1944,22 +2027,19 @@ def main():
                             apply_volume()
                             save_settings()
                             
-                    # 히트박스 디버그 스위칭
                     elif settings_index == 2:
                         if event.key in [pygame.K_LEFT, pygame.K_RIGHT, pygame.K_RETURN, pygame.K_SPACE]:
                             SHOW_HITBOXES = not SHOW_HITBOXES
                             save_settings()
                             
-                    # FPS 토글 스위칭
                     elif settings_index == 3:
                         if event.key in [pygame.K_LEFT, pygame.K_RIGHT, pygame.K_RETURN, pygame.K_SPACE]:
                             SHOW_FPS = not SHOW_FPS
                             save_settings()
                             
-                    # 서브메뉴 진입 및 메인메뉴 탈출 분기 연산
                     if event.key in [pygame.K_RETURN, pygame.K_SPACE]:
                         if settings_index == 4:
-                            GAME_STATE = "KEY_SETTINGS"  # 전용 키 설정 화면으로 전환
+                            GAME_STATE = "KEY_SETTINGS"
                             key_settings_index = 0
                         elif settings_index == 5:
                             GAME_STATE = "MENU"
@@ -1994,13 +2074,40 @@ def main():
                 "BACK TO SETTINGS MENU"
             ]
             
+            # 🌟 [마우스 지원 구조] 호버 및 클릭을 처리하기 위한 가이드 좌표 영역 사전 할당
+            key_rects = []
+            mouse_pos = pygame.mouse.get_pos()
+            
             for idx, text in enumerate(key_options):
+                opt_rect = pygame.Rect(SCREEN_WIDTH // 2 - 275, 175 + idx * 52, 550, 45)
+                key_rects.append(opt_rect)
+                
+                # 마우스 호버로 가시적인 포커스 연동
+                if opt_rect.collidepoint(mouse_pos):
+                    key_settings_index = idx
+                    
                 color = (255, 200, 0) if idx == key_settings_index else (140, 140, 140)
                 opt_surf = opt_font.render(text, True, color)
                 screen.blit(opt_surf, (SCREEN_WIDTH // 2 - opt_surf.get_width() // 2, 180 + idx * 52))
                 
             for event in pygame.event.get():
                 if event.type == pygame.QUIT: running = False
+                
+                # 🌟 [마우스 클릭 감지 식별자]
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    if event.button == 1: # 마우스 좌클릭 시
+                        for idx, rect in enumerate(key_rects):
+                            if rect.collidepoint(event.pos):
+                                if idx == 0: REBIND_TARGET = "LEFT"; GAME_STATE = "REBINDING"
+                                elif idx == 1: REBIND_TARGET = "RIGHT"; GAME_STATE = "REBINDING"
+                                elif idx == 2: REBIND_TARGET = "DOWN"; GAME_STATE = "REBINDING"
+                                elif idx == 3: REBIND_TARGET = "JUMP"; GAME_STATE = "REBINDING"
+                                elif idx == 4: REBIND_TARGET = "LIGHT"; GAME_STATE = "REBINDING"
+                                elif idx == 5: REBIND_TARGET = "HEAVY"; GAME_STATE = "REBINDING"
+                                elif idx == 6:
+                                    GAME_STATE = "SETTINGS"
+                                    settings_index = 4
+                                    
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_UP:
                         key_settings_index = (key_settings_index - 1) % len(key_options)
@@ -2015,8 +2122,8 @@ def main():
                         elif key_settings_index == 5: REBIND_TARGET = "HEAVY"; GAME_STATE = "REBINDING"
                         elif key_settings_index == 6:
                             GAME_STATE = "SETTINGS"
-                            settings_index = 4  # 부모 설정 창 복귀 시 키 설정 항목에 포커스를 둡니다.
-                            
+                            settings_index = 4
+
             pygame.display.flip()
             clock.tick(FPS)
             continue
@@ -2049,6 +2156,7 @@ def main():
             continue
 
         # 🌟 [신규 추가] 일시정지(PAUSE) 상태 UI 및 조작 로직
+        # 🌟 [신규 추가] 일시정지(PAUSE) 상태 UI 및 조작 로직
         elif GAME_STATE == "PAUSE":
             # 기존 인게임 스크린에 가볍게 반투명 어두운 레이어 씌우기
             dim_overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
@@ -2063,13 +2171,82 @@ def main():
             screen.blit(title_surf, (SCREEN_WIDTH // 2 - title_surf.get_width() // 2, 170))
 
             pause_options = ["RESUME GAME", "SETTINGS MENU", "RETURN TO MAIN MENU"]
+            
+            # 🌟 [마우스 지원 구조] 일시정지 감지 좌표 영역 사전 생성
+            pause_rects = []
+            mouse_pos = pygame.mouse.get_pos()
+            
             for idx, opt_text in enumerate(pause_options):
+                opt_rect = pygame.Rect(SCREEN_WIDTH // 2 - 200, 325 + idx * 60, 400, 50)
+                pause_rects.append(opt_rect)
+                
+                # 마우스 호버 동기화
+                if opt_rect.collidepoint(mouse_pos):
+                    pause_menu_index = idx
+                    
                 color = (255, 205, 0) if idx == pause_menu_index else (150, 150, 150)
                 opt_surf = menu_font.render(opt_text, True, color)
                 screen.blit(opt_surf, (SCREEN_WIDTH // 2 - opt_surf.get_width() // 2, 330 + idx * 60))
 
+            # 🌟 공통적으로 실행할 메뉴 귀환/시스템 초기화 함수 인라인화하여 중복 선언 소거
+            def execute_reset_and_return():
+                global GAME_STATE, KO_CINEMATIC_TIMER, KO_TRIGGERED, current_stage_idx, stage_info, match_timer, time_over, countdown_timer, death_delay_timer, game_over_alpha, game_cleared, game_clear_alpha, post_clear_timer, post_death_timer, CAMERA_X
+                GAME_STATE = "MENU"
+                KO_CINEMATIC_TIMER = 0
+                KO_TRIGGERED = False
+                ACTIVE_DAMAGE_NUMBERS.clear()
+                transition_state = "IDLE"                  
+                transition_x = -SCREEN_WIDTH - 400         
+                current_stage_idx = 0
+                stage_info = STAGE_SEQUENCE[current_stage_idx]
+                
+                match_timer = 60.0        
+                time_over = False          
+
+                player.rect.left = 200
+                player.rect.bottom = GROUND_Y
+                player.hp = PLAYER_MAX_HP
+                player.state = "IDLE"
+                player.vel_x = 0
+                player.vel_y = 0
+                player.combo_step = 0
+                player.hit_gauge = 0
+                player.dash_charges = 1
+                player.ghosts.clear()
+                
+                enemy.kill()
+                enemy = Enemy(1000, GROUND_Y, stage_info["id"], stage_info["hp"], stage_info.get("boss", False))
+                all_sprites.empty()
+                all_sprites.add(player, enemy)
+                
+                countdown_timer = 240
+                if "bgm" in SOUNDS and SOUNDS["bgm"]: SOUNDS["bgm"].stop() 
+                death_delay_timer = 0
+                game_over_alpha = 0
+                game_cleared = False
+                game_clear_alpha = 0
+                post_clear_timer = 150
+                post_death_timer = 150
+                CAMERA_X = 0
+                p1_combo_display.active = False
+                p2_combo_display.active = False
+
             for event in pygame.event.get():
                 if event.type == pygame.QUIT: running = False
+                
+                # 🌟 [마우스 좌클릭 시 동작 매핑]
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    if event.button == 1:
+                        for idx, rect in enumerate(pause_rects):
+                            if rect.collidepoint(event.pos):
+                                if idx == 0:
+                                    GAME_STATE = "GAMEPLAY"
+                                elif idx == 1:
+                                    GAME_STATE = "SETTINGS"
+                                    settings_index = 0
+                                elif idx == 2:
+                                    execute_reset_and_return()
+                                    
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
                         GAME_STATE = "GAMEPLAY"
@@ -2084,46 +2261,7 @@ def main():
                             GAME_STATE = "SETTINGS"
                             settings_index = 0
                         elif pause_menu_index == 2:
-                            # 게임 리셋 후 메인 메뉴로 강제 탈출
-                            GAME_STATE = "MENU"
-                            KO_CINEMATIC_TIMER = 0
-                            KO_TRIGGERED = False
-                            ACTIVE_DAMAGE_NUMBERS.clear()
-                            transition_state = "IDLE"                  # 🌟 추가
-                            transition_x = -SCREEN_WIDTH - 400         # 🌟 추가
-                            current_stage_idx = 0
-                            stage_info = STAGE_SEQUENCE[current_stage_idx]
-                            
-                            match_timer = 60.0        # 🌟 메뉴로 나갈 때 시간 초기화
-                            time_over = False          # 🌟 메뉴로 나갈 때 타임오버 플래그 초기화
-
-                            player.rect.left = 200
-                            player.rect.bottom = GROUND_Y
-                            player.hp = PLAYER_MAX_HP
-                            player.state = "IDLE"
-                            player.vel_x = 0
-                            player.vel_y = 0
-                            player.combo_step = 0
-                            player.hit_gauge = 0
-                            player.dash_charges = 1
-                            player.ghosts.clear()
-                            
-                            enemy.kill()
-                            enemy = Enemy(1000, GROUND_Y, stage_info["id"], stage_info["hp"], stage_info.get("boss", False))
-                            all_sprites.empty()
-                            all_sprites.add(player, enemy)
-                            
-                            countdown_timer = 240
-                            if "bgm" in SOUNDS and SOUNDS["bgm"]: SOUNDS["bgm"].stop() # 🌟 [추가] 메인메뉴 강제 탈출 시 BGM 정지
-                            death_delay_timer = 0
-                            game_over_alpha = 0
-                            game_cleared = False
-                            game_clear_alpha = 0
-                            post_clear_timer = 150
-                            post_death_timer = 150
-                            CAMERA_X = 0
-                            p1_combo_display.active = False
-                            p2_combo_display.active = False
+                            execute_reset_and_return()
 
             pygame.display.flip()
             clock.tick(FPS)
