@@ -1,0 +1,15 @@
+{
+    "BGM_VOLUME": 0.4,
+    "SFX_VOLUME": 0.5,
+    "SHOW_HITBOXES": false,
+    "SHOW_FPS": true,
+    "CURRENT_LANG": "ENGLISH",
+    "KEY_BINDINGS": {
+        "LEFT": 97,
+        "RIGHT": 100,
+        "DOWN": 115,
+        "JUMP": 119,
+        "LIGHT": 105,
+        "HEAVY": 111
+    }
+}

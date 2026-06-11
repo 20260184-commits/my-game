@@ -4,12 +4,11 @@ import os
 import random
 import math  # 🌟 이 줄을 반드시 추가해야 합니다!
 
-PRELOADED_ANIMATIONS = {}  # 🌟 [신규 추가] 보스 및 캐릭터 전역 애니메이션 저장용 캐시
+PRELOADED_ANIMATIONS  = {}  # 🌟 [신규 추가] 보스 및 캐릭터 전역 애니메이션 저장용 캐시
 FLASH_CACHE = {}           # 🌟 [최적화용 추가] 피격 흰색 깜빡임 캐시
 GHOST_BLUE_CACHE = {}      # 🌟 [최적화용 추가] 일반 캐릭터 푸른 잔상 캐시
 GHOST_RED_CACHE = {}       # 🌟 [최적화용 추가] 보스 캐릭터 붉은 잔상 캐시
 FLIP_CACHE = {}
-
 # 🌟 [전역 스코프 버그 해결] 하단의 모든 클래스가 인스턴스 전방 참조 에러 없이 즉시 식별하도록 전역 변수와 구조 클래스를 파일 최상단으로 이관합니다.
 KO_CINEMATIC_TIMER = 0     # 드라마틱 KO 연출용 타이머 (남은 프레임 수)
 KO_TRIGGERED = False       # KO 슬로우 모션이 라운드당 딱 한 번만 트리거되도록 제어하는 플래그
@@ -155,6 +154,7 @@ SHOW_HITBOXES = False
 SHOW_FPS = False       # 🌟 [요청 반영] FPS 지문 화면 노출 활성화 플래그 선언 (기본 ON)
 BGM_VOLUME = 0.4      
 SFX_VOLUME = 0.5
+CURRENT_LANG = "ENGLISH" # 🌟 [신규 추가] 다국어 실시간 전환용 전역 언어 식별자 (ENGLISH / KOREAN)
 
 # 🌟 [신규 추가] 사용자 정의 키 바인딩 초기 기본값
 KEY_BINDINGS = {
@@ -174,13 +174,14 @@ import json
 SETTINGS_FILE = "settings.json"
 
 def save_settings():
-    """유저가 설정한 오디오 볼륨 및 키 바인딩 정보를 json 파일에 영구 보존합니다."""
+    """유저가 설정한 언어 정보, 오디오 볼륨 및 키 바인딩 정보를 json 파일에 영구 보존합니다."""
     try:
         data = {
             "BGM_VOLUME": BGM_VOLUME,
             "SFX_VOLUME": SFX_VOLUME,
             "SHOW_HITBOXES": SHOW_HITBOXES,
-            "SHOW_FPS": SHOW_FPS,  # 🌟 [요청 반영] FPS 토글 상태 세이브 필드 추가
+            "SHOW_FPS": SHOW_FPS,
+            "CURRENT_LANG": CURRENT_LANG, # 🌟 [신규 추가] 언어 설정 세이브 연동
             "KEY_BINDINGS": {k: int(v) for k, v in KEY_BINDINGS.items()}
         }
         with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
@@ -190,7 +191,7 @@ def save_settings():
 
 def load_settings():
     """프로젝트 실행 시 settings.json 파일을 복원하여 전역 변수들의 데이터를 룩업합니다."""
-    global BGM_VOLUME, SFX_VOLUME, SHOW_HITBOXES, SHOW_FPS, KEY_BINDINGS
+    global BGM_VOLUME, SFX_VOLUME, SHOW_HITBOXES, SHOW_FPS, KEY_BINDINGS, CURRENT_LANG
     if os.path.exists(SETTINGS_FILE):
         try:
             with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
@@ -198,7 +199,8 @@ def load_settings():
             BGM_VOLUME = data.get("BGM_VOLUME", 0.4)
             SFX_VOLUME = data.get("SFX_VOLUME", 0.5)
             SHOW_HITBOXES = data.get("SHOW_HITBOXES", False)
-            SHOW_FPS = data.get("SHOW_FPS", False)  # 기본 OFF 로드
+            SHOW_FPS = data.get("SHOW_FPS", False)
+            CURRENT_LANG = data.get("CURRENT_LANG", "ENGLISH") # 🌟 [신규 추가] 언어 설정 로드 연동
             
             bindings = data.get("KEY_BINDINGS", {})
             for k, v in bindings.items():
@@ -457,6 +459,38 @@ class BurstEffect:
             draw_x = int(self.x - camera_x)
             draw_y = int(self.y)
             pygame.draw.circle(surface, (r, g, b), (draw_x, draw_y), int(self.radius), 8)
+
+
+class WindSlash:
+    """🌟 [신규 추가] 캔슬 대쉬 격발 순간, 기류를 가르고 이동하는 초고속 연출용 수평 돌풍 검풍 파티클 클래스"""
+    def __init__(self, x, y, facing_right):
+        self.shards = []
+        speed = 28.0
+        # 🌟 [요청 반영] 검풍 기류가 캐릭터의 등 뒤쪽(배후)에서 실감 나게 흘러나오도록 x좌표에 역방향 오프셋 75px을 적용합니다.
+        start_x = x - 130 if facing_right else x + 130
+        
+        # 12개의 수평 검풍 가이드 라인 빌드
+        for _ in range(12):
+            self.shards.append({
+                "pos": [start_x + random.randint(-20, 20), y + random.randint(-40, 40)],
+                "vel": [random.uniform(speed * 0.8, speed * 1.5) * (1 if facing_right else -1), random.uniform(-1.0, 1.0)],
+                "length": random.randint(40, 95),
+                "height": random.randint(2, 4),
+                "color": (255, 255, 255),
+                "life": random.randint(10, 18)
+            })
+
+    def update(self, dt_scale=1.0):
+        for s in self.shards:
+            s["pos"][0] += s["vel"][0] * dt_scale
+            s["pos"][1] += s["vel"][1] * dt_scale
+            s["life"] -= 1 * dt_scale
+        self.shards = [s for s in self.shards if s["life"] > 0]
+
+    def draw(self, surface, camera_x):
+        for s in self.shards:
+            rx = s["pos"][0] - camera_x
+            pygame.draw.rect(surface, s["color"], (rx, s["pos"][1], s["length"], s["height"]), border_radius=2)
 
 
 class LeafParticle:
@@ -761,6 +795,7 @@ class Entity(pygame.sprite.Sprite):
         self.combo_step = 0
         self.combo_timer = 0 # 🌟 프레임 단위 콤보 유지시간 타이머 (60 = 1초)
         self.cancel_ui_timer = 0 # 🌟 [추가] 캔슬 대쉬 UI 표시 타이머
+        self.cancel_dash_stun_timer = 0 # 🌟 [신규 추가] 캔슬 대쉬 경직으로 인한 배경 반전 활성화 프레임 타이머
         self.is_blocking = False # 🌟 [추가] 방금 맞은 공격을 가드했는가?
         self.used_cancel_in_combo = False # 🌟 [추가] 이번 콤보에서 캔슬 대쉬를 썼는가? (무한 대쉬 방지)
         self.flash_timer = 0
@@ -790,6 +825,7 @@ class Entity(pygame.sprite.Sprite):
                 self.has_dodged = True           # 이펙트 격발 완료 기록
             return False
 
+        self.cancel_dash_stun_timer = 0
         self.combo_step = 0
         self.combo_timer = 0
         self.used_cancel_in_combo = False
@@ -903,23 +939,26 @@ class Entity(pygame.sprite.Sprite):
     def trigger_dash(self, is_forward):
         if self.state == "DEATH": return False
         
-        # 🌟 [버그 수정] 공격 중 캔슬 대쉬는 일반 대쉬 쿨타임을 무시하도록 분리
-        if self.is_attacking:
+        # 🌟 [버그 원인 해결] 사용자가 타격을 인지하고 대쉬를 입력하는 시점은 타격 프레임뿐만 아니라 공격 후 딜레이(RECOVERY) 프레임인 경우가 대부분입니다.
+        # 공격이 능동 진행 중인 상태이거나, 이미 공격을 성공(has_hit)시키고 후딜레이(RECOVERY) 상태에 있을 때 모두 캔슬 대쉬 권한을 인가합니다.
+        is_cancel_eligible = self.is_attacking or (self.state == "RECOVERY" and getattr(self, "has_hit", False))
+
+        if is_cancel_eligible:
             if self.dash_charges > 0:
                 print("✨ 콤보 캔슬 대쉬! 콤보 유지시간 확장!")
                 self.dash_charges -= 1
                 self.is_cancel_dash = True 
                 self.combo_timer = 120
                 self.cancel_ui_timer = 30 
-                self.used_cancel_in_combo = True # 이번 콤보에선 게이지 획득 불가
+                self.used_cancel_in_combo = True # 이번 콤보에서 캔슬 대쉬를 썼는가? (무한 대쉬 방지)
                 play_sound("cancel")
             else:
                 return False
         else:
-            # 일반 대쉬는 쿨타임이 없을 때만 작동
+            # 일반 대쉬는 쿨타임이 없을 때만 작동하도록 안전하게 제어합니다.
             if self.dash_cooldown_timer > 0:
                 return False
-            self.is_cancel_dash = False # 그냥 대쉬로 설정
+            self.is_cancel_dash = False # 일반 대쉬 상태일 때 False 보장
             
         self.hitbox = pygame.Rect(0, 0, 0, 0)
 
@@ -1052,6 +1091,12 @@ class Entity(pygame.sprite.Sprite):
 
         if hasattr(self, 'flash_timer') and self.flash_timer > 0:
             self.flash_timer -= 1 * dt_scale
+
+        if hasattr(self, 'cancel_dash_stun_timer') and self.cancel_dash_stun_timer > 0:
+            self.cancel_dash_stun_timer -= 1 * dt_scale # 🌟 [신규 추가] 델타 스케일을 반영하여 배경 반전 경직 타이머 차감
+            # 🌟 [신규 추가] 경직 상태(HIT)에서 회복되거나 히트 스턴 수치가 끝나면 반전 연출 타이머를 강제로 조기 초기화합니다.
+            if self.state != "HIT" or (hasattr(self, 'hit_stun_timer') and self.hit_stun_timer <= 0):
+                self.cancel_dash_stun_timer = 0
 
         if hasattr(self, 'display_hp'):
             if self.display_hp > self.hp:
@@ -1574,9 +1619,9 @@ class Enemy(Entity):
 FREEZE_TIMER = False  
 
 def main():
-    # 🌟 [전역 스코프 등록] 소거된 GLOBAL_VOLUME 대신 BGM_VOLUME, SFX_VOLUME, SHOW_FPS 명시 바인딩
+    # 🌟 [전역 스코프 등록] 전역 변수들의 값을 함수 내에서 안전하게 수정하고 참조할 수 있도록 CURRENT_LANG을 명시해 바인딩합니다.
     global CAMERA_X, GAME_STATE, SHOW_HITBOXES, SHOW_FPS, PRELOADED_ANIMATIONS, FLIP_CACHE, FREEZE_TIMER, KO_CINEMATIC_TIMER, KO_TRIGGERED
-    global DAMAGE_FONT_NORMAL, DAMAGE_FONT_CRIT, BGM_VOLUME, SFX_VOLUME
+    global DAMAGE_FONT_NORMAL, DAMAGE_FONT_CRIT, BGM_VOLUME, SFX_VOLUME, CURRENT_LANG
 
     pygame.mixer.pre_init(44100, -16, 2, 512) 
     pygame.init()
@@ -1714,6 +1759,8 @@ def main():
     ko_white_overlay.fill((255, 255, 255))
     ko_white_overlay.set_alpha(70)
     
+    # 🌟 무사용 차원 오버레이 서페이스 메모리 소거 완료
+    
     font_ko = pygame.font.SysFont("impact", 170, italic=True)
     ko_text_base = font_ko.render("K.O.", True, (255, 20, 20)).convert_alpha() # 텍스트 선행 이미지 변환화
     ko_shadow_base = font_ko.render("K.O.", True, (0, 0, 0)).convert_alpha()
@@ -1738,6 +1785,7 @@ def main():
 
     match_timer = 60.0  # 🌟 [추가] 라운드 시간 (60초)
     time_over = False    # 🌟 [추가] 시간 종료 여부 플래그
+    letterbox_active_frames = 0.0 # 🌟 [신규 추가] 경직이 일어나는 피격자 스턴 타임과 동기화하여 전개 속도를 극도로 밀착 제어할 정밀 타이머
 
     transition_state = "IDLE"          # "IDLE" (대기), "WIPE_IN" (화면 가려짐), "WIPE_OUT" (화면 걷힘)
     transition_x = -SCREEN_WIDTH - 400 # 트랜지션 막대의 가로 위치 초기값
@@ -1823,7 +1871,8 @@ def main():
                 
             title_font = pygame.font.SysFont("impact", 85, italic=True)
             subtitle_font = pygame.font.SysFont("arial", 20, bold=True, italic=True)
-            menu_font = pygame.font.SysFont("arial", 28, bold=True)
+            # 🌟 [한글 깨짐 해결] 영문 전용인 arial 대신 한국어 유니코드를 선명하게 지원하는 표준 폰트 멀티-폴백 지정
+            menu_font = pygame.font.SysFont(["malgungothic", "nanumgothic", "notosanskr", "gulim", "dotum", "arial"], 25, bold=True)
             
             # 신비롭게 고동치는 비취색 에메랄드 조명 연출 (고유 Sine 파형 활용)
             pulse_val = 170 + int(85 * math.sin(pygame.time.get_ticks() * 0.003))
@@ -1841,24 +1890,27 @@ def main():
             screen.blit(title_surf, (SCREEN_WIDTH // 2 - title_surf.get_width() // 2, 120))
             screen.blit(sub_surf, (SCREEN_WIDTH // 2 - sub_surf.get_width() // 2, 215))
             
-            # 메뉴 카드 디자인 (UI 박스를 깔끔하게 얹어 가독성을 완성합니다)
-            box_w, box_h = 440, 270
-            pygame.draw.rect(screen, (4, 30, 12, 180), (SCREEN_WIDTH//2 - box_w//2, 310, box_w, box_h), border_radius=15)
-            pygame.draw.rect(screen, (46, 204, 113), (SCREEN_WIDTH//2 - box_w//2, 310, box_w, box_h), 2, border_radius=15)
+            # 메뉴 카드 디자인 (수작업 조작 카드 배치를 위해 박스 크기를 세밀하게 조정합니다)
+            box_w, box_h = 440, 310
+            pygame.draw.rect(screen, (4, 30, 12, 180), (SCREEN_WIDTH//2 - box_w//2, 300, box_w, box_h), border_radius=15)
+            pygame.draw.rect(screen, (46, 204, 113), (SCREEN_WIDTH//2 - box_w//2, 300, box_w, box_h), 2, border_radius=15)
             
-            # 테마와 조화로운 옵션 텍스트로 수정
-            menu_options = ["PURIFY FOREST (START)", "SETTINGS", "EXIT"]
+            # 🌟 [요청 반영] 전역 언어 설정 값에 따른 동적 변환
+            if CURRENT_LANG == "KOREAN":
+                menu_options = ["전투 정화 시작 (START)", "조작 가이드북", "게임 설정", "완전 종료"]
+            else:
+                menu_options = ["PURIFY FOREST (START)", "HOW TO PLAY", "SETTINGS", "EXIT"]
             
-            # 🌟 [최적화 적용] 매 프레임 텍스트 치수를 측정하는 대신, 가독성 높은 고정 클릭 영역(Rect)을 설계하여 연산량을 최소화합니다.
+            # 🌟 [최적화 적용] 마우스 고정 클릭 감지 레이아웃 오프셋 조정
             menu_rects = []
             mouse_pos = pygame.mouse.get_pos()
             
             for idx, opt in enumerate(menu_options):
-                # 각 메뉴 항목의 영역을 고정 Rect로 생성 (X좌표는 메뉴 박스의 중앙, Y좌표는 항목의 위치)
-                item_rect = pygame.Rect(SCREEN_WIDTH // 2 - 220, 350 + idx * 65, 440, 50)
+                # 4개의 항목 배치 간격 재조정
+                item_rect = pygame.Rect(SCREEN_WIDTH // 2 - 220, 330 + idx * 60, 440, 45)
                 menu_rects.append(item_rect)
                 
-                # 마우스 커서가 영역 안에 들어가면 선택 인덱스(menu_index)를 즉시 동기화합니다.
+                # 마우스 포커스 연동
                 if item_rect.collidepoint(mouse_pos):
                     menu_index = idx
 
@@ -1870,14 +1922,13 @@ def main():
                     opt_text = opt
                     
                 opt_surf = menu_font.render(opt_text, True, color)
-                screen.blit(opt_surf, (SCREEN_WIDTH // 2 - opt_surf.get_width() // 2, 355 + idx * 65))
-                
+                screen.blit(opt_surf, (SCREEN_WIDTH // 2 - opt_surf.get_width() // 2, 335 + idx * 60))
             for event in pygame.event.get():
                 if event.type == pygame.QUIT: running = False
                 
-                # 🌟 [마우스 클릭 이벤트 처리 추가]
+                # 🌟 [마우스 클릭을 통한 조작 가이드 진입 동기화]
                 if event.type == pygame.MOUSEBUTTONDOWN:
-                    if event.button == 1: # 마우스 좌클릭인 경우에만 격발
+                    if event.button == 1:
                         for idx, rect in enumerate(menu_rects):
                             if rect.collidepoint(event.pos):
                                 if idx == 0:
@@ -1885,9 +1936,11 @@ def main():
                                     match_timer = 60.0
                                     time_over = False
                                 elif idx == 1:
+                                    GAME_STATE = "HOW_TO_PLAY" # 가이드 씬 진입
+                                elif idx == 2:
                                     GAME_STATE = "SETTINGS"
                                     settings_index = 0
-                                elif idx == 2:
+                                elif idx == 3:
                                     running = False
                                     
                 if event.type == pygame.KEYDOWN:
@@ -1901,49 +1954,181 @@ def main():
                             match_timer = 60.0
                             time_over = False
                         elif menu_index == 1:
+                            GAME_STATE = "HOW_TO_PLAY" # 가이드 씬 진입
+                        elif menu_index == 2:
                             GAME_STATE = "SETTINGS"
                             settings_index = 0
-                        elif menu_index == 2:
+                        elif menu_index == 3:
                             running = False
                             
             pygame.display.flip()
             clock.tick(FPS)
             continue
+        
+        # ==========================================
+        # 🌟 [신규 추가] HOW TO PLAY (게임 조작법 가이드 및 시스템 안내 보드)
+        # ==========================================
+        elif GAME_STATE == "HOW_TO_PLAY":
+            menu_cam_x = pygame.time.get_ticks() * 0.05
+            background.draw(screen, menu_cam_x)
+            
+            menu_overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+            menu_overlay.fill((4, 12, 10)) 
+            menu_overlay.set_alpha(225)    
+            screen.blit(menu_overlay, (0, 0))
+            
+            for particle in ambient_particles:
+                particle.update()
+                particle.draw(screen, menu_cam_x)
+                
+            # 🌟 [한글 깨짐 해결] 영문/한글 상태에 따라 대형 타이틀의 폰트를 동적으로 자동 교체하여 비주얼을 해치지 않게 방어합니다.
+            if CURRENT_LANG == "KOREAN":
+                title_font = pygame.font.SysFont(["malgungothic", "nanumgothic", "notosanskr", "gulim", "dotum", "arial"], 52, bold=True, italic=True)
+            else:
+                title_font = pygame.font.SysFont("impact", 65, italic=True)
+                
+            head_font = pygame.font.SysFont(["malgungothic", "nanumgothic", "notosanskr", "gulim", "dotum", "arial"], 21, bold=True)
+            body_font = pygame.font.SysFont(["malgungothic", "nanumgothic", "notosanskr", "gulim", "dotum", "arial"], 17, bold=True)
+            
+            title_text = "조작 가이드북" if CURRENT_LANG == "KOREAN" else "HOW TO PLAY"
+            title_surf = title_font.render(title_text, True, (0, 255, 150))
+            screen.blit(title_surf, (SCREEN_WIDTH // 2 - title_surf.get_width() // 2, 50))
+            
+            # 보드 껍데기
+            pygame.draw.rect(screen, (4, 30, 12, 220), (SCREEN_WIDTH//2 - 470, 130, 940, 480), border_radius=15)
+            pygame.draw.rect(screen, (46, 204, 113), (SCREEN_WIDTH//2 - 470, 130, 940, 480), 2, border_radius=15)
+            
+            def key_name(act):
+                return pygame.key.name(KEY_BINDINGS[act]).upper()
+                
+            col1_x = SCREEN_WIDTH // 2 - 430
+            col2_x = SCREEN_WIDTH // 2 + 30
+            
+            if CURRENT_LANG == "KOREAN":
+                # --- 한국어 버전 조작 카드 (완벽 단축형) ---
+                screen.blit(head_font.render("[ 캐릭터 기본 이동 ]", True, (255, 200, 0)), (col1_x, 155))
+                screen.blit(body_font.render(f"• 왼쪽 이동: [ {key_name('LEFT')} ]", True, (250, 250, 250)), (col1_x, 195))
+                screen.blit(body_font.render(f"• 오른쪽 이동: [ {key_name('RIGHT')} ]", True, (250, 250, 250)), (col1_x, 230))
+                screen.blit(body_font.render(f"• 아래 앉기: [ {key_name('DOWN')} ] (버스트 선입력 전제)", True, (250, 250, 250)), (col1_x, 265))
+                screen.blit(body_font.render(f"• 점프 동작: [ {key_name('JUMP')} ]", True, (250, 250, 250)), (col1_x, 300))
+                screen.blit(body_font.render(f"• 픽셀 가드: 적 반대 방향키 입력 유지", True, (130, 220, 255)), (col1_x, 335))
+                screen.blit(body_font.render(f"• 퀵 대쉬: 방향키 [ {key_name('LEFT')} / {key_name('RIGHT')} ] 더블 탭", True, (130, 220, 255)), (col1_x, 370))
+                
+                screen.blit(head_font.render("[ 전술 타격 기술 ]", True, (255, 200, 0)), (col1_x, 425))
+                screen.blit(body_font.render(f"• 약공격: [ {key_name('LIGHT')} ] (빠른 발동 및 콤보 전개)", True, (250, 250, 250)), (col1_x, 465))
+                screen.blit(body_font.render(f"• 강공격: [ {key_name('HEAVY')} ] (묵직한 가드 해제기)", True, (250, 250, 250)), (col1_x, 500))
+                screen.blit(body_font.render(f"• 백 스코프 슬래시: [ 뒤 ] + [ {key_name('LIGHT')} ] (C1 전용)", True, (250, 250, 250)), (col1_x, 535))
+                
+                screen.blit(head_font.render("[ 특수 전술 시스템 ]", True, (0, 245, 255)), (col2_x, 155))
+                screen.blit(body_font.render("• CRISIS BURST (위기 탈출)", True, (255, 80, 100)), (col2_x, 195))
+                screen.blit(body_font.render(f"  - 조작: [ {key_name('DOWN')} ] 더블 탭 -> 공격 입력", True, (210, 210, 210)), (col2_x, 225))
+                screen.blit(body_font.render("  - 효과: 게이지 1칸 소비로 피격 경직 즉시 탈출", True, (160, 160, 160)), (col2_x, 250))
+                
+                screen.blit(body_font.render("• CANCEL DASH (콤보 캔슬)", True, (0, 255, 150)), (col2_x, 305))
+                screen.blit(body_font.render("  - 조작: 타격 명중/후딜 중 대쉬 즉시 입력", True, (210, 210, 210)), (col2_x, 335))
+                screen.blit(body_font.render("  - 효과: 후딜을 취소하고 레터박스 시공간 정지", True, (160, 160, 160)), (col2_x, 360))
+
+                screen.blit(head_font.render("[ 전투의 정석 팁 ]", True, (255, 200, 0)), (col2_x, 420))
+                screen.blit(body_font.render("• 타격 성공 시 하단 게이지 도트가 누적됩니다.", True, (180, 220, 180)), (col2_x, 460))
+                screen.blit(body_font.render("• 백대쉬 시작 시 최초 8프레임 완전 무적 상태 부여.", True, (180, 220, 180)), (col2_x, 495))
+                screen.blit(body_font.render("• 가드는 데미지를 50% 경감하나 가드백이 따릅니다.", True, (180, 220, 180)), (col2_x, 530))
+            else:
+                # --- 영어 버전 조작 카드 (완벽 단축형) ---
+                screen.blit(head_font.render("[ BASIC MOVEMENT ]", True, (255, 200, 0)), (col1_x, 155))
+                screen.blit(body_font.render(f"• MOVE LEFT : [ {key_name('LEFT')} ]", True, (250, 250, 250)), (col1_x, 195))
+                screen.blit(body_font.render(f"• MOVE RIGHT : [ {key_name('RIGHT')} ]", True, (250, 250, 250)), (col1_x, 230))
+                screen.blit(body_font.render(f"• MOVE DOWN : [ {key_name('DOWN')} ] (For Burst setups)", True, (250, 250, 250)), (col1_x, 265))
+                screen.blit(body_font.render(f"• JUMP ACTION : [ {key_name('JUMP')} ]", True, (250, 250, 250)), (col1_x, 300))
+                screen.blit(body_font.render(f"• pixel GUARD : Hold back direction key", True, (130, 220, 255)), (col1_x, 335))
+                screen.blit(body_font.render(f"• QUICK DASH : Double-tap Left/Right keys", True, (130, 220, 255)), (col1_x, 370))
+                
+                screen.blit(head_font.render("[ ATTACK ACTIONS ]", True, (255, 200, 0)), (col1_x, 425))
+                screen.blit(body_font.render(f"• LIGHT ATTACK : [ {key_name('LIGHT')} ] (Fast Slash / Combos)", True, (250, 250, 250)), (col1_x, 465))
+                screen.blit(body_font.render(f"• HEAVY ATTACK : [ {key_name('HEAVY')} ] (Slam / Guardbreak)", True, (250, 250, 250)), (col1_x, 500))
+                screen.blit(body_font.render(f"• REVERSE SLASH : Back + [ {key_name('LIGHT')} ] (C1 Only)", True, (250, 250, 250)), (col1_x, 535))
+                
+                screen.blit(head_font.render("[ ADVANCED SYSTEMS ]", True, (0, 245, 255)), (col2_x, 155))
+                screen.blit(body_font.render("• CRISIS BURST", True, (255, 80, 100)), (col2_x, 195))
+                screen.blit(body_font.render(f"  - Cmd : Double-Tap [ {key_name('DOWN')} ] -> Press Attack", True, (210, 210, 210)), (col2_x, 225))
+                screen.blit(body_font.render("  - Eff : Breaks hitstun & blows enemy back", True, (160, 160, 160)), (col2_x, 250))
+                
+                screen.blit(body_font.render("• CANCEL DASH", True, (0, 255, 150)), (col2_x, 305))
+                screen.blit(body_font.render("  - Cmd : Double-Tap direction on hit", True, (210, 210, 210)), (col2_x, 335))
+                screen.blit(body_font.render("  - Eff : Cancels recovery & freezes time", True, (160, 160, 160)), (col2_x, 360))
+
+                screen.blit(head_font.render("[ SYSTEM TIPS ]", True, (255, 200, 0)), (col2_x, 420))
+                screen.blit(body_font.render("• Burst gauges are earned on hit success.", True, (180, 220, 180)), (col2_x, 460))
+                screen.blit(body_font.render("• Backdash grants 8-frames of invincibility.", True, (180, 220, 180)), (col2_x, 495))
+                screen.blit(body_font.render("• Guard absorbs 50% damage with pushback.", True, (180, 220, 180)), (col2_x, 530))
+
+            back_text = "PRESS [ ESC ] OR [ ENTER ] TO RETURN TO MAIN MENU" if CURRENT_LANG == "ENGLISH" else "메인 메뉴로 돌아가려면 [ ESC ] 또는 [ ENTER ] 키를 누르십시오"
+            back_surf = head_font.render(back_text, True, (140, 140, 140))
+            screen.blit(back_surf, (SCREEN_WIDTH // 2 - back_surf.get_width() // 2, 630))
+            
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT: running = False
+                if event.type == pygame.KEYDOWN:
+                    if event.key in [pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_SPACE]:
+                        GAME_STATE = "MENU"
+                        menu_index = 1
+            pygame.display.flip()
+            clock.tick(FPS)
+            continue
+        
 
         # ==========================================
-        # 🌟 [6번 항목 구조 고도화] 메인 설정 화면 분기
+        # 🌟 [6번 항목 구조 고도화] 메인 설정 화면 분기 (다국어 전환 대응)
         # ==========================================
         elif GAME_STATE == "SETTINGS":
             screen.fill((12, 17, 34))
             
-            title_font = pygame.font.SysFont("impact", 60)
-            opt_font = pygame.font.SysFont("arial", 24, bold=True)
+            # 🌟 [한글 깨짐 해결] 환경 설정 대형 타이틀도 영문/한글에 맞춰 전용 폰트로 분화 동적 매핑
+            if CURRENT_LANG == "KOREAN":
+                title_font = pygame.font.SysFont(["malgungothic", "nanumgothic", "notosanskr", "gulim", "dotum", "arial"], 48, bold=True)
+            else:
+                title_font = pygame.font.SysFont("impact", 60)
+                
+            opt_font = pygame.font.SysFont(["malgungothic", "nanumgothic", "notosanskr", "gulim", "dotum", "arial"], 24, bold=True)
             
-            title_surf = title_font.render("SETTINGS", True, (255, 255, 255))
-            screen.blit(title_surf, (SCREEN_WIDTH // 2 - title_surf.get_width() // 2, 80))
+            title_text = "환경 설정" if CURRENT_LANG == "KOREAN" else "SETTINGS"
+            title_surf = title_font.render(title_text, True, (255, 255, 255))
+            screen.blit(title_surf, (SCREEN_WIDTH // 2 - title_surf.get_width() // 2, 60))
             
             # 볼륨 수치 및 시스템 가시성 상태 텍스트 바인딩
             bgm_vol_str = f"{int(BGM_VOLUME * 100)}%"
             sfx_vol_str = f"{int(SFX_VOLUME * 100)}%"
             hitboxes_str = "ON" if SHOW_HITBOXES else "OFF"
             fps_str = "ON" if SHOW_FPS else "OFF"
+            lang_str = "한국어" if CURRENT_LANG == "KOREAN" else "ENGLISH"
             
-            # 메인 설정을 깔끔하게 6개 옵션으로 정렬하여 직관성 확보
-            settings_options = [
-                f"BGM VOLUME: <  {bgm_vol_str}  >",
-                f"SFX VOLUME: <  {sfx_vol_str}  >",
-                f"SHOW HITBOXES: <  {hitboxes_str}  >",
-                f"SHOW FPS: <  {fps_str}  >",
-                "KEY CONFIGURATION [ENTER]",  # 서브메뉴 진입 관문
-                "BACK TO MAIN MENU"
-            ]
+            # 메인 설정을 깔끔하게 7개 옵션으로 재정렬
+            if CURRENT_LANG == "KOREAN":
+                settings_options = [
+                    f"배경음 볼륨 (BGM): <  {bgm_vol_str}  >",
+                    f"효과음 볼륨 (SFX): <  {sfx_vol_str}  >",
+                    f"히트박스 가시화: <  {hitboxes_str}  >",
+                    f"FPS 프레임 가시화: <  {fps_str}  >",
+                    f"언어 설정 (LANGUAGE): <  {lang_str}  >", # 신규 필드 추가
+                    "키보드 조작 설정 변경 [ENTER]",
+                    "메인 메뉴로 돌아가기"
+                ]
+            else:
+                settings_options = [
+                    f"BGM VOLUME: <  {bgm_vol_str}  >",
+                    f"SFX VOLUME: <  {sfx_vol_str}  >",
+                    f"SHOW HITBOXES: <  {hitboxes_str}  >",
+                    f"SHOW FPS: <  {fps_str}  >",
+                    f"LANGUAGE: <  {lang_str}  >", # 신규 필드 추가
+                    "KEY CONFIGURATION [ENTER]",
+                    "BACK TO MAIN MENU"
+                ]
             
             settings_rects = []
             mouse_pos = pygame.mouse.get_pos()
             
+            # 7개 옵션 박스 수직 배치 비율 최적화
             for idx, text in enumerate(settings_options):
-                # 정중앙 중심 좌우 250px 영역을 설정 클릭용 감지 박스로 지정
-                opt_rect = pygame.Rect(SCREEN_WIDTH // 2 - 250, 185 + idx * 55, 500, 45)
+                opt_rect = pygame.Rect(SCREEN_WIDTH // 2 - 250, 150 + idx * 52, 500, 42)
                 settings_rects.append(opt_rect)
                 
                 # 마우스 호버 상태 적용
@@ -1952,17 +2137,17 @@ def main():
 
                 color = (255, 200, 0) if idx == settings_index else (140, 140, 140)
                 opt_surf = opt_font.render(text, True, color)
-                screen.blit(opt_surf, (SCREEN_WIDTH // 2 - opt_surf.get_width() // 2, 190 + idx * 55))
+                screen.blit(opt_surf, (SCREEN_WIDTH // 2 - opt_surf.get_width() // 2, 155 + idx * 52))
                 
             for event in pygame.event.get():
                 if event.type == pygame.QUIT: running = False
                 
-                # 🌟 [마우스 클릭 조작 구조 추가]
+                # 🌟 [마우스 클릭 조작 구조 추가 - 7개 옵션 대칭]
                 if event.type == pygame.MOUSEBUTTONDOWN:
-                    if event.button == 1:  # 좌클릭 감지
+                    if event.button == 1:
                         for idx, rect in enumerate(settings_rects):
                             if rect.collidepoint(event.pos):
-                                # 1. BGM 볼륨 (중앙 기준 왼쪽 영역 클릭 시 감소, 오른쪽 클릭 시 증가)
+                                # 1. BGM 볼륨
                                 if idx == 0:
                                     if event.pos[0] < SCREEN_WIDTH // 2:
                                         BGM_VOLUME = max(0.0, round(BGM_VOLUME - 0.1, 1))
@@ -1971,7 +2156,7 @@ def main():
                                     apply_volume()
                                     save_settings()
                                     
-                                # 2. SFX 볼륨 (동일 구조 적용)
+                                # 2. SFX 볼륨
                                 elif idx == 1:
                                     if event.pos[0] < SCREEN_WIDTH // 2:
                                         SFX_VOLUME = max(0.0, round(SFX_VOLUME - 0.1, 1))
@@ -1990,13 +2175,18 @@ def main():
                                     SHOW_FPS = not SHOW_FPS
                                     save_settings()
                                     
-                                # 5. 키 바인딩 서브메뉴 진입
+                                # 5. 🌟 [신규 추가] 마우스 언어 토글 
                                 elif idx == 4:
+                                    CURRENT_LANG = "ENGLISH" if CURRENT_LANG == "KOREAN" else "KOREAN"
+                                    save_settings()
+                                    
+                                # 6. 키 설정 진입
+                                elif idx == 5:
                                     GAME_STATE = "KEY_SETTINGS"
                                     key_settings_index = 0
                                     
-                                # 6. 메인 메뉴 귀환
-                                elif idx == 5:
+                                # 7. 메인 귀환
+                                elif idx == 6:
                                     GAME_STATE = "MENU"
                                     settings_index = 0
                                     
@@ -2006,7 +2196,7 @@ def main():
                     elif event.key == pygame.K_DOWN:
                         settings_index = (settings_index + 1) % len(settings_options)
                     
-                    # (기존 키보드 입력 매핑 구조 유지)
+                    # 1. BGM 슬라이드
                     elif settings_index == 0:
                         if event.key == pygame.K_LEFT:
                             BGM_VOLUME = max(0.0, round(BGM_VOLUME - 0.1, 1))
@@ -2017,6 +2207,7 @@ def main():
                             apply_volume()
                             save_settings()
                             
+                    # 2. SFX 슬라이드
                     elif settings_index == 1:
                         if event.key == pygame.K_LEFT:
                             SFX_VOLUME = max(0.0, round(SFX_VOLUME - 0.1, 1))
@@ -2027,21 +2218,29 @@ def main():
                             apply_volume()
                             save_settings()
                             
+                    # 3. 히트박스 토글
                     elif settings_index == 2:
                         if event.key in [pygame.K_LEFT, pygame.K_RIGHT, pygame.K_RETURN, pygame.K_SPACE]:
                             SHOW_HITBOXES = not SHOW_HITBOXES
                             save_settings()
                             
+                    # 4. FPS 토글
                     elif settings_index == 3:
                         if event.key in [pygame.K_LEFT, pygame.K_RIGHT, pygame.K_RETURN, pygame.K_SPACE]:
                             SHOW_FPS = not SHOW_FPS
                             save_settings()
                             
+                    # 5. 🌟 [신규 추가] 키보드 언어 전환 토글
+                    elif settings_index == 4:
+                        if event.key in [pygame.K_LEFT, pygame.K_RIGHT, pygame.K_RETURN, pygame.K_SPACE]:
+                            CURRENT_LANG = "ENGLISH" if CURRENT_LANG == "KOREAN" else "KOREAN"
+                            save_settings()
+                            
                     if event.key in [pygame.K_RETURN, pygame.K_SPACE]:
-                        if settings_index == 4:
+                        if settings_index == 5:
                             GAME_STATE = "KEY_SETTINGS"
                             key_settings_index = 0
-                        elif settings_index == 5:
+                        elif settings_index == 6:
                             GAME_STATE = "MENU"
                             settings_index = 0
             pygame.display.flip()
@@ -2049,30 +2248,47 @@ def main():
             continue
 
         # ==========================================
-        # 🌟 [6번 항목 우수 기획] 전용 키 설정(KEY_SETTINGS) 서브화면 상태 연산 분기 추가
+        # 🌟 [6번 항목 우수 기획] 전용 키 설정(KEY_SETTINGS) 서브화면 상태 연산 분기 추가 (번역)
         # ==========================================
         elif GAME_STATE == "KEY_SETTINGS":
             screen.fill((12, 17, 34))
             
-            title_font = pygame.font.SysFont("impact", 60)
-            opt_font = pygame.font.SysFont("arial", 24, bold=True)
+            # 🌟 [한글 깨짐 해결] 조작 키 입력 바인딩 대형 타이틀도 영문/한글 분화 매핑 적용
+            if CURRENT_LANG == "KOREAN":
+                title_font = pygame.font.SysFont(["malgungothic", "nanumgothic", "notosanskr", "gulim", "dotum", "arial"], 48, bold=True)
+            else:
+                title_font = pygame.font.SysFont("impact", 60)
+                
+            opt_font = pygame.font.SysFont(["malgungothic", "nanumgothic", "notosanskr", "gulim", "dotum", "arial"], 24, bold=True)
             
-            title_surf = title_font.render("KEY CONFIGURATION", True, (255, 255, 255))
+            title_text = "조작키 입력 바인딩" if CURRENT_LANG == "KOREAN" else "KEY CONFIGURATION"
+            title_surf = title_font.render(title_text, True, (255, 255, 255))
             screen.blit(title_surf, (SCREEN_WIDTH // 2 - title_surf.get_width() // 2, 80))
             
             def get_bound_key_name(action):
                 return pygame.key.name(KEY_BINDINGS[action]).upper()
 
-            # 키 설정들만 단독으로 독립시켜 깔끔한 화면을 구성합니다.
-            key_options = [
-                f"MOVE LEFT KEY: [ {get_bound_key_name('LEFT')} ]",
-                f"MOVE RIGHT KEY: [ {get_bound_key_name('RIGHT')} ]",
-                f"MOVE DOWN KEY: [ {get_bound_key_name('DOWN')} ]",  
-                f"JUMP KEY: [ {get_bound_key_name('JUMP')} ]",
-                f"LIGHT ATTACK KEY: [ {get_bound_key_name('LIGHT')} ]",
-                f"HEAVY ATTACK KEY: [ {get_bound_key_name('HEAVY')} ]",
-                "BACK TO SETTINGS MENU"
-            ]
+            # 🌟 [요청 반영] 언어 상태에 따라 키 맵핑 정보 다국어 출력
+            if CURRENT_LANG == "KOREAN":
+                key_options = [
+                    f"왼쪽 이동 키: [ {get_bound_key_name('LEFT')} ]",
+                    f"오른쪽 이동 키: [ {get_bound_key_name('RIGHT')} ]",
+                    f"아래쪽 이동 키 (BURST 가드): [ {get_bound_key_name('DOWN')} ]",  
+                    f"점프 입력 키: [ {get_bound_key_name('JUMP')} ]",
+                    f"약공격 타격 키: [ {get_bound_key_name('LIGHT')} ]",
+                    f"강공격 타격 키: [ {get_bound_key_name('HEAVY')} ]",
+                    "이전 설정 메뉴로 돌아가기"
+                ]
+            else:
+                key_options = [
+                    f"MOVE LEFT KEY: [ {get_bound_key_name('LEFT')} ]",
+                    f"MOVE RIGHT KEY: [ {get_bound_key_name('RIGHT')} ]",
+                    f"MOVE DOWN KEY: [ {get_bound_key_name('DOWN')} ]",  
+                    f"JUMP KEY: [ {get_bound_key_name('JUMP')} ]",
+                    f"LIGHT ATTACK KEY: [ {get_bound_key_name('LIGHT')} ]",
+                    f"HEAVY ATTACK KEY: [ {get_bound_key_name('HEAVY')} ]",
+                    "BACK TO SETTINGS MENU"
+                ]
             
             # 🌟 [마우스 지원 구조] 호버 및 클릭을 처리하기 위한 가이드 좌표 영역 사전 할당
             key_rects = []
@@ -2130,14 +2346,18 @@ def main():
                             
 
         # ==========================================
-        # 🌟 [키 바인딩 감지 및 저장 분기]
+        # 🌟 [키 바인딩 감지 및 저장 분기] (번역)
         # ==========================================
         elif GAME_STATE == "REBINDING":
             screen.fill((12, 17, 34))
-            rebind_font = pygame.font.SysFont("arial", 26, bold=True)
+            rebind_font = pygame.font.SysFont(["malgungothic", "nanumgothic", "notosanskr", "gulim", "dotum", "arial"], 26, bold=True)
             
-            line1 = rebind_font.render(f"REBINDING ACTION: {REBIND_TARGET}", True, (255, 200, 0))
-            line2 = rebind_font.render("PRESS ANY KEY ON KEYBOARD TO DEFINE ACTION...", True, (255, 255, 255))
+            if CURRENT_LANG == "KOREAN":
+                line1 = rebind_font.render(f"키 바인딩 변경 대상: [ {REBIND_TARGET} ]", True, (255, 200, 0))
+                line2 = rebind_font.render("키보드의 변경할 키를 입력하여 주십시오...", True, (255, 255, 255))
+            else:
+                line1 = rebind_font.render(f"REBINDING ACTION: {REBIND_TARGET}", True, (255, 200, 0))
+                line2 = rebind_font.render("PRESS ANY KEY ON KEYBOARD TO DEFINE ACTION...", True, (255, 255, 255))
             
             screen.blit(line1, (SCREEN_WIDTH // 2 - line1.get_width() // 2, SCREEN_HEIGHT // 2 - 35))
             screen.blit(line2, (SCREEN_WIDTH // 2 - line2.get_width() // 2, SCREEN_HEIGHT // 2 + 25))
@@ -2191,6 +2411,9 @@ def main():
             # 🌟 공통적으로 실행할 메뉴 귀환/시스템 초기화 함수 인라인화하여 중복 선언 소거
             def execute_reset_and_return():
                 global GAME_STATE, KO_CINEMATIC_TIMER, KO_TRIGGERED, current_stage_idx, stage_info, match_timer, time_over, countdown_timer, death_delay_timer, game_over_alpha, game_cleared, game_clear_alpha, post_clear_timer, post_death_timer, CAMERA_X
+                # 🌟 [크래시 및 논리 버그 해결] main() 함수의 로컬 변수인 enemy와 트랜지션 변수들을 재할당하고 수정할 수 있도록 nonlocal 스코프로 바인딩합니다.
+                nonlocal enemy, transition_state, transition_x
+                
                 GAME_STATE = "MENU"
                 KO_CINEMATIC_TIMER = 0
                 KO_TRIGGERED = False
@@ -2624,13 +2847,19 @@ def main():
             if player.state == "DASH" and player.is_cancel_dash:
                 if enemy.state == "HIT" and not enemy.is_blocking:
                     enemy.hit_stun_timer += DASH_CANCEL_STUN_BONUS
+                    enemy.cancel_dash_stun_timer = enemy.hit_stun_timer # 🌟 [신규 추가] 캔슬 대쉬로 굳어 있는 스턴 잔여 시간을 배경 반전 조건 타이머에 등록
+                    # 🌟 [신규 추가] 플레이어 위치에 고속 돌풍 파티클을 스폰하여 기류 저항을 표현합니다.
+                    active_explosions.append(WindSlash(player.rect.centerx, player.rect.centery, player.facing_right))
                 player.is_cancel_dash = False 
 
             if enemy.state == "DASH" and enemy.is_cancel_dash:
                 if player.state == "HIT" and not player.is_blocking:
                     player.hit_stun_timer += DASH_CANCEL_STUN_BONUS
+                    player.cancel_dash_stun_timer = player.hit_stun_timer # 🌟 [신규 추가] 플레이어가 AI의 캔슬 대쉬에 굳은 스턴 시간을 조건 타이머에 등록
+                    # 🌟 [신규 추가] AI 위치에 고속 돌풍 파티클을 스폰하여 기류 저항을 표현합니다.
+                    active_explosions.append(WindSlash(enemy.rect.centerx, enemy.rect.centery, enemy.facing_right))
                     print(f"⚠️ DANGER! AI가 캔슬 대쉬로 플레이어를 굳혔습니다!")
-                enemy.is_cancel_dash = False 
+                enemy.is_cancel_dash = False
 
             p1_combo_display.update()
             p2_combo_display.update()
@@ -2639,6 +2868,7 @@ def main():
             # 🌟 이펙트 연출의 연산 속도도 델타 타임 스케일에 따라 제어
             for exp in active_explosions:
                 exp.update(dt_scale)
+            active_explosions = [e for e in active_explosions if e.shards]
             
             # 🌟 슬로우모션 연출 중이거나 정상 연산 중일 때 모두 델타 스케일을 주입하여 가속도를 보정
             if KO_TRIGGERED and KO_CINEMATIC_TIMER > 0:
@@ -2818,21 +3048,36 @@ def main():
             particle.update()
             particle.draw(screen, CAMERA_X)
 
-        # 1. 월드 요소 그리기 (오프셋 및 카메라 적용)
+        # 1. 월드 요소 그리기 (오프셋 및 카메라 적용 선행 연산)
         offset_x, offset_y = 0, 0
         if screen_shake_timer > 0:
             offset_x = random.randint(-screen_shake_intensity, screen_shake_intensity)
             offset_y = random.randint(-screen_shake_intensity, screen_shake_intensity)
             screen_shake_timer -= 1
 
+        # 🌟 [개쩌는 연출 - 시공간 뒤틀림 극대화 패키지] 
+        # 캔슬 대쉬 성공 시 (1) 배경 반전, (2) 역동적 집중선(Speed Lines), (3) 왜곡 파동 링 충격파를 세트로 동시 구현합니다.
+        # 🌟 [시네마틱 레터박스 0.1초 완성 전개 연출] 
+        is_bg_inverted = any(getattr(entity, 'cancel_dash_stun_timer', 0) > 0 for entity in all_sprites)
+        if is_bg_inverted:
+            # 타격 및 경직 발생 즉시 활성 프레임을 1:1 증분 처리 (0.1초인 6프레임 만에 80px 완벽 고정)
+            letterbox_active_frames += 1 * dt_scale
+            letterbox_h = min(80, int(letterbox_active_frames * 14)) # 6프레임 도달 시 84px이 계산되므로, min 한계치에 걸려 80px 완성
+            
+            pygame.draw.rect(screen, (0, 0, 0), (0, 0, SCREEN_WIDTH, letterbox_h))
+            pygame.draw.rect(screen, (0, 0, 0), (0, SCREEN_HEIGHT - letterbox_h, SCREEN_WIDTH, letterbox_h))
+        else:
+            # 경직 연출 상태에서 탈출하면 다음 캔슬 대쉬를 위해 프레임 타이머를 즉시 초기화합니다.
+            letterbox_active_frames = 0.0
+
         for entity in all_sprites:
             # 잔상
             for img, rect, alpha in entity.ghosts:
                 img.set_alpha(alpha) 
                 screen.blit(img, (rect.x + offset_x - CAMERA_X, rect.y + offset_y))
-            # 본체
+            # 본체 렌더링 정상 복원
             if hasattr(entity, 'flash_timer') and entity.flash_timer > 0:
-                # 🌟 [버그 수정] 플래시 효과도 고유 키를 사용하도록 변경
+                # 🌟 [버그 수정] 피격 플래시 효과 처리
                 cache_key = (entity.char_id, entity.state, entity.frame_index, entity.facing_right, entity.is_boss)
                 flash_img = get_flash_frame(entity.image, cache_key)
                 screen.blit(flash_img, (entity.rect.x + offset_x - CAMERA_X, entity.rect.y + offset_y))
@@ -2998,10 +3243,9 @@ def main():
         p2_dash_text = CACHED_DASH_TEXTS.get(enemy.dash_charges, CACHED_DASH_TEXTS[0])  # 🌟 연산 대신 캐시 참조
         screen.blit(p2_dash_text, (SCREEN_WIDTH - 240, 670))
 
+        # 🌟 [렉 제로화 최적화] 그리기 루프에서 중복 수행되던 불필요한 .update() 및 리스트 재생성(shards 필터) 병목을 완전히 제거하고 단순 블릿 출력만 수행합니다.
         for exp in active_explosions:
-            exp.update()
             exp.draw(screen, CAMERA_X)
-        active_explosions = [e for e in active_explosions if e.shards]
 
         # 🌟 [6번 - 타이밍 고도화] 플레이어 사망 시 암전 연출 및 R/M 가이드라인 출력
         if player.state == "DEATH":
